@@ -15,6 +15,10 @@ import (
 )
 
 func main() {
+	if err := config.RunInteractiveSetupIfNeeded(); err != nil {
+		log.Fatalf("初始化配置失败: %v", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)

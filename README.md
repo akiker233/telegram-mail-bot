@@ -20,6 +20,14 @@
 
 ### 2. 配置环境变量
 
+有两种方式：
+
+**方式一：首次运行自动引导**（推荐）
+
+直接运行编译好的 `mailbot`，如果检测到必填的环境变量缺失且当前在交互式终端中，会依次询问每一项配置，非必填项直接回车即可跳过，填写完成后自动保存到工作目录下的 `.env` 文件。
+
+**方式二：手动编辑 .env**
+
 复制 `.env.example` 为 `.env`，填入必填项：
 
 ```bash
@@ -35,6 +43,8 @@ cp .env.example .env
 | `ALLOWED_TELEGRAM_USERS` | 允许使用机器人的 Telegram 用户 ID，逗号分隔（用 [@userinfobot](https://t.me/userinfobot) 查看自己的 ID） |
 
 可选项见 `.env.example` 里的注释（数据库路径、Gmail/Outlook OAuth 客户端凭证）。
+
+无交互终端环境（如容器后台运行、CI）下不会触发引导，需要提前通过 `.env` 文件或系统环境变量配置好。
 
 ### 3. 编译
 
