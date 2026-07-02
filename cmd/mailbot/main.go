@@ -15,6 +15,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "config" {
+		if err := config.RunReconfigure(); err != nil {
+			log.Fatalf("重新配置失败: %v", err)
+		}
+		return
+	}
+
 	if err := config.RunInteractiveSetupIfNeeded(); err != nil {
 		log.Fatalf("初始化配置失败: %v", err)
 	}

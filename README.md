@@ -62,6 +62,14 @@ GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -o mailbot     ./cmd/mailbot   
 
 启动时会自动读取工作目录下的 `.env`（如果存在）；生产部署也可以直接用系统环境变量或容器编排工具注入配置，不依赖 `.env` 文件。真实环境变量的优先级高于 `.env` 里的同名项。
 
+### 5. 重新配置
+
+```bash
+./mailbot config
+```
+
+交互式重新填写全部配置项：已有值会展示出来，直接回车保留，输入新内容则覆盖，完成后整体重写 `.env`。
+
 ## Telegram 命令
 
 | 命令 | 说明 |

@@ -41,6 +41,13 @@ func RunInteractiveSetupIfNeeded() error {
 	return runSetupWizard(os.Stdin, os.Stdout)
 }
 
+// RunReconfigure 强制重新询问全部配置项（不论当前是否已设置），用于 `./mailbot config` 命令。
+// 已有值直接回车即可保留，输入新内容则覆盖；完成后用最终结果整体重写 .env。
+func RunReconfigure() error {
+	_ = godotenv.Load()
+	return runReconfigureWizard(os.Stdin, os.Stdout)
+}
+
 func runSetupWizard(in io.Reader, out io.Writer) error {
 	fmt.Fprintln(out, "检测到缺少必要的配置，开始引导填写 .env（直接回车可跳过非必填项）：")
 
@@ -50,23 +57,54 @@ func runSetupWizard(in io.Reader, out io.Writer) error {
 		if os.Getenv(field.key) != "" {
 			continue
 		}
-		for {
-			fmt.Fprintf(out, "%s: ", field.prompt)
-			line, _ := reader.ReadString('\n')
-			line = strings.TrimSpace(line)
-			if line == "" && field.required {
-				fmt.Fprintln(out, "该项为必填，请输入。")
-				continue
-			}
-			if line != "" {
-				values[field.key] = line
-				os.Setenv(field.key, line)
-			}
-			break
+		line := promptField(reader, out, field, "")
+		if line != "" {
+			values[field.key] = line
+			os.Setenv(field.key, line)
 		}
 	}
 
 	return appendEnvFile(values, out)
+}
+
+// runReconfigureWizard 对每一项都重新询问，回车保留当前值（若有），输入新内容则覆盖，
+// 最终把全部字段的最新值整体重写进 .env。
+func runReconfigureWizard(in io.Reader, out io.Writer) error {
+	fmt.Fprintln(out, "重新配置 .env（直接回车保留当前值，非必填项当前无值时可直接回车跳过）：")
+
+	reader := bufio.NewReader(in)
+	values := make(map[string]string)
+	for _, field := range setupFields {
+		current := os.Getenv(field.key)
+		line := promptField(reader, out, field, current)
+		if line == "" {
+			line = current
+		}
+		if line != "" {
+			values[field.key] = line
+			os.Setenv(field.key, line)
+		}
+	}
+
+	return rewriteEnvFile(values, out)
+}
+
+// promptField 显示提示语（若有当前值会一并展示）并读取一行输入，必填项在两者都为空时反复重新询问。
+func promptField(reader *bufio.Reader, out io.Writer, field envField, current string) string {
+	label := field.prompt
+	if current != "" {
+		label = fmt.Sprintf("%s [当前: %s]", field.prompt, current)
+	}
+	for {
+		fmt.Fprintf(out, "%s: ", label)
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "" && current == "" && field.required {
+			fmt.Fprintln(out, "该项为必填，请输入。")
+			continue
+		}
+		return line
+	}
 }
 
 func hasRequiredEnv() bool {
@@ -106,6 +144,25 @@ func appendEnvFile(values map[string]string, out io.Writer) error {
 		if _, err := fmt.Fprintf(f, "%s=%s\n", field.key, v); err != nil {
 			return fmt.Errorf("config: 写入 .env 失败: %w", err)
 		}
+	}
+
+	fmt.Fprintln(out, "配置已保存到 .env")
+	return nil
+}
+
+// rewriteEnvFile 用给定的最终值集合整体重写 .env（覆盖已有文件），字段顺序固定为 setupFields。
+func rewriteEnvFile(values map[string]string, out io.Writer) error {
+	var b strings.Builder
+	for _, field := range setupFields {
+		v, ok := values[field.key]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "%s=%s\n", field.key, v)
+	}
+
+	if err := os.WriteFile(".env", []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("config: 写入 .env 失败: %w", err)
 	}
 
 	fmt.Fprintln(out, "配置已保存到 .env")
