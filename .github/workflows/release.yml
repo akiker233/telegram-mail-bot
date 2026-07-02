@@ -47,6 +47,7 @@ jobs:
           cd dist
           name="mailbot_${{ matrix.goos }}_${{ matrix.goarch }}"
           mkdir "$name"
+          cp ../.env.example "$name/"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             mv mailbot.exe "$name/"
             zip -r "$name.zip" "$name"
