@@ -12,7 +12,11 @@ import (
 	"telegram-mail-bot/internal/db"
 	"telegram-mail-bot/internal/manager"
 	"telegram-mail-bot/internal/telegram"
+	"telegram-mail-bot/internal/update"
 )
+
+// version 由发布流程通过 -ldflags "-X main.version=..." 注入，本地开发编译时为空字符串。
+var version string
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "config" {
@@ -20,6 +24,13 @@ func main() {
 			log.Fatalf("重新配置失败: %v", err)
 		}
 		return
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		if err := update.Run(version); err != nil {
+			log.Fatalf("更新失败: %v", err)
+		}
+		os.Exit(0)
 	}
 
 	if err := config.RunInteractiveSetupIfNeeded(); err != nil {

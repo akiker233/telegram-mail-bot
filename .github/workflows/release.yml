@@ -40,7 +40,7 @@ jobs:
           mkdir -p dist
           out=mailbot
           if [ "$GOOS" = "windows" ]; then out=mailbot.exe; fi
-          go build -o "dist/$out" ./cmd/mailbot
+          go build -ldflags "-X main.version=${{ github.ref_name }}" -o "dist/$out" ./cmd/mailbot
 
       - name: Package archive
         run: |
@@ -56,12 +56,23 @@ jobs:
             tar -czf "$name.tar.gz" "$name"
           fi
 
+      - name: Generate checksum
+        run: |
+          cd dist
+          name="mailbot_${{ matrix.goos }}_${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            sha256sum "$name.zip" > "$name.checksum.txt"
+          else
+            sha256sum "$name.tar.gz" > "$name.checksum.txt"
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: mailbot_${{ matrix.goos }}_${{ matrix.goarch }}
           path: |
             dist/*.zip
             dist/*.tar.gz
+            dist/*.checksum.txt
 
   release:
     needs: build
@@ -71,6 +82,12 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Merge checksums
+        run: |
+          cd artifacts
+          cat *.checksum.txt > checksums.txt
+          rm -f *.checksum.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
