@@ -64,7 +64,7 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 	switch s.Step {
 	case StepEmail:
 		if !strings.Contains(text, "@") {
-			return "邮箱地址格式不对，请重新输入", false, false
+			return "⚠️ 邮箱地址格式不对，请重新输入", false, false
 		}
 		s.Draft.Email = text
 
@@ -110,12 +110,12 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 			s.Step = StepHost
 			return s.hostPrompt(), false, false
 		default:
-			return "请回复\"oauth\"或\"密码\"", false, false
+			return "⚠️ 请回复\"oauth\"或\"密码\"", false, false
 		}
 
 	case StepHost:
 		if text == "" {
-			return "服务器地址不能为空，请重新输入", false, false
+			return "⚠️ 服务器地址不能为空，请重新输入", false, false
 		}
 		s.Draft.Host = text
 		s.Step = StepPort
@@ -124,7 +124,7 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 	case StepPort:
 		port, err := strconv.Atoi(text)
 		if err != nil || port <= 0 || port > 65535 {
-			return "端口必须是 1-65535 之间的数字，请重新输入", false, false
+			return "⚠️ 端口必须是 1-65535 之间的数字，请重新输入", false, false
 		}
 		s.Draft.Port = port
 		s.Step = StepPassword
@@ -132,7 +132,7 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 
 	case StepPassword:
 		if text == "" {
-			return "密码不能为空，请重新输入", false, false
+			return "⚠️ 密码不能为空，请重新输入", false, false
 		}
 		s.Draft.Password = text
 		if s.Draft.Protocol == "pop3" {
@@ -157,12 +157,12 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 			s.Step = StepConfirm
 			return s.confirmPrompt(), false, false
 		default:
-			return "请回复\"是\"或\"否\"", false, false
+			return "⚠️ 请回复\"是\"或\"否\"", false, false
 		}
 
 	case StepSMTPHost:
 		if text == "" {
-			return "服务器地址不能为空，请重新输入", false, false
+			return "⚠️ 服务器地址不能为空，请重新输入", false, false
 		}
 		s.Draft.SMTPHost = text
 		s.Step = StepSMTPPort
@@ -171,7 +171,7 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 	case StepSMTPPort:
 		port, err := strconv.Atoi(text)
 		if err != nil || port <= 0 || port > 65535 {
-			return "端口必须是 1-65535 之间的数字，请重新输入", false, false
+			return "⚠️ 端口必须是 1-65535 之间的数字，请重新输入", false, false
 		}
 		s.Draft.SMTPPort = port
 		s.Step = StepConfirm
@@ -181,20 +181,20 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 		// device flow 的轮询在 handlers.go 里异步进行，完成后由 handlers.go 直接把
 		// Step 推进到 StepConfirm 并调用 Send 主动通知用户，不经过 Advance。
 		// 用户在等待期间发消息只会走到这里，提示其耐心等待即可。
-		return "正在等待浏览器授权完成，请稍候（或发送 /cancel 取消）", false, false
+		return "🔐 正在等待浏览器授权完成，请稍候（或发送 /cancel 取消）", false, false
 
 	case StepConfirm:
 		switch text {
 		case "确认", "yes", "y", "Y":
-			return "账号已添加", true, false
+			return "✅ 账号已添加", true, false
 		case "取消", "no", "n", "N":
-			return "已取消添加账号", false, true
+			return "🚫 已取消添加账号", false, true
 		default:
-			return "请回复\"确认\"保存账号，或\"取消\"放弃", false, false
+			return "⚠️ 请回复\"确认\"保存账号，或\"取消\"放弃", false, false
 		}
 	}
 
-	return "内部状态异常，请重新执行 /addaccount", false, true
+	return "⚠️ 内部状态异常，请重新执行 /addaccount", false, true
 }
 
 // CompleteOAuth 在 device flow 轮询成功后填入 token 并把状态推进到 StepConfirm，
@@ -251,7 +251,7 @@ func (s *Session) confirmPrompt() string {
 		protocolLabel = "POP3"
 	}
 	return fmt.Sprintf(
-		"请确认账号信息：\n邮箱: %s\n认证方式: %s\n%s: %s:%d\nSMTP: %s\n\n回复\"确认\"保存，回复\"取消\"放弃",
+		"📋 请确认账号信息：\n邮箱: %s\n认证方式: %s\n%s: %s:%d\nSMTP: %s\n\n回复\"确认\"保存，回复\"取消\"放弃",
 		s.Draft.Email, authInfo, protocolLabel, s.Draft.Host, s.Draft.Port, smtpInfo,
 	)
 }

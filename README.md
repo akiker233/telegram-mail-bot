@@ -70,19 +70,29 @@ GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -o mailbot     ./cmd/mailbot   
 
 交互式重新填写全部配置项：已有值会展示出来，直接回车保留，输入新内容则覆盖，完成后整体重写 `.env`。
 
+### 6. 自动更新
+
+```bash
+./mailbot update
+```
+
+检查 GitHub 上的最新 Release，如果比当前版本新，会下载对应平台的压缩包、校验 SHA256 后自动替换掉当前正在运行的二进制文件。更新完成后需要手动重启程序才会生效。
+
+只有通过 Release 页面下载的正式发布版本才带有版本号，可以使用该命令更新；自行编译的开发版本没有版本号，运行 `update` 会直接报错，请手动下载新版本替换。
+
 ## Telegram 命令
 
 | 命令 | 说明 |
 |---|---|
-| `/start` | 显示帮助 |
-| `/addaccount` | 添加一个邮箱账号（IMAP，默认），机器人会依次询问邮箱、服务器信息、密码/授权码等 |
-| `/addaccount pop3` | 用 POP3 协议添加账号（无实时推送，定时轮询） |
-| `/listaccounts` | 列出已添加的账号及状态 |
+| `/start`、`/help` | 显示帮助 |
+| `/addaccount` | 添加一个邮箱账号，不带参数时先弹出协议选择按钮（IMAP/POP3），机器人会依次询问邮箱、服务器信息、密码/授权码等 |
+| `/addaccount pop3` | 直接用 POP3 协议添加账号，跳过协议选择按钮（无实时推送，定时轮询） |
+| `/listaccounts` | 列出已添加的账号及状态，每个账号带一个删除按钮 |
 | `/delaccount <id>` | 删除一个账号（id 从 `/listaccounts` 获取） |
-| `/send` | 用已配置发信（SMTP）的账号发一封邮件 |
+| `/send` | 用已配置发信（SMTP）的账号发一封邮件，账号、确认等步骤用按钮操作 |
 | `/cancel` | 取消当前正在进行的多轮问答 |
 
-添加账号时，常见邮箱域名（gmail.com、outlook.com、hotmail.com、qq.com、163.com、126.com）会自动填好服务器地址和端口，只需要输入密码或授权码；其他邮箱需要手动输入 IMAP/POP3 服务器地址。
+添加账号时，常见邮箱域名（gmail.com、outlook.com、hotmail.com、qq.com、163.com、126.com）会自动填好服务器地址和端口，只需要输入密码或授权码；其他邮箱需要手动输入 IMAP/POP3 服务器地址。多轮问答中的选择步骤（认证方式、是否配置发信、最终确认等）都提供按钮，也可以直接输入文字回复。
 
 ### QQ / 163 / 126 邮箱
 

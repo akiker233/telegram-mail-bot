@@ -3,12 +3,23 @@ package telegram
 import (
 	"context"
 	"database/sql"
+	"log"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"golang.org/x/oauth2"
 )
 
 const updateTimeoutSeconds = 60
+
+// botCommands 是注册到 Telegram 客户端的原生命令菜单（输入 "/" 时的自动补全列表）。
+var botCommands = []tgbotapi.BotCommand{
+	{Command: "help", Description: "显示帮助与命令列表"},
+	{Command: "addaccount", Description: "添加一个邮箱账号"},
+	{Command: "listaccounts", Description: "列出已添加的账号"},
+	{Command: "delaccount", Description: "删除一个账号"},
+	{Command: "send", Description: "用已添加的账号发一封邮件"},
+	{Command: "cancel", Description: "取消当前正在进行的操作"},
+}
 
 // Bot 是 Telegram 长轮询机器人，负责命令分发和白名单校验。
 type Bot struct {
@@ -31,6 +42,12 @@ func New(token string, database *sql.DB, manager AccountStarter, allowedUsers ma
 	if err != nil {
 		return nil, err
 	}
+
+	// 注册命令菜单失败不影响机器人正常工作（只是客户端里少一个自动补全列表），只记日志。
+	if _, err := api.Request(tgbotapi.NewSetMyCommands(botCommands...)); err != nil {
+		log.Printf("telegram: 注册命令菜单失败: %v", err)
+	}
+
 	return &Bot{
 		api:           api,
 		db:            database,
@@ -63,10 +80,23 @@ func (b *Bot) Run(ctx context.Context) {
 			b.api.StopReceivingUpdates()
 			return
 		case update := <-updates:
+			if update.CallbackQuery != nil {
+				b.handleCallback(update.CallbackQuery)
+				continue
+			}
 			if update.Message == nil {
 				continue
 			}
 			b.handleMessage(update.Message)
 		}
+	}
+}
+
+// replyWithKeyboard 发送一条带 inline keyboard 的纯文本消息。
+func (b *Bot) replyWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("telegram: send message with keyboard to chat %d failed: %v", chatID, err)
 	}
 }

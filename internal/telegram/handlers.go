@@ -20,13 +20,15 @@ import (
 // htmlTagRe 用于 HTML 发送失败时的降级：剥除所有标签得到纯文本重发一次。
 var htmlTagRe = regexp.MustCompile(`(?s)<[^>]*>`)
 
-const helpText = `可用命令：
-/addaccount - 添加一个邮箱账号（IMAP，默认）
-/addaccount pop3 - 用 POP3 协议添加账号（无实时推送，定时轮询）
-/listaccounts - 列出已添加的账号
-/delaccount <id> - 删除一个账号
-/send - 用已添加的账号发一封邮件
-/cancel - 取消当前正在进行的操作`
+const helpText = `👋 我可以把邮箱新邮件转发到 Telegram，也能用已添加的账号发信。
+
+可用命令：
+📥 /addaccount - 添加一个邮箱账号（IMAP，默认）
+📥 /addaccount pop3 - 用 POP3 协议添加账号（无实时推送，定时轮询）
+📋 /listaccounts - 列出已添加的账号
+🗑️ /delaccount <id> - 删除一个账号
+📤 /send - 用已添加的账号发一封邮件
+🚫 /cancel - 取消当前正在进行的操作`
 
 // AccountStarter 抽象了账号添加成功后启动监听的动作，避免 telegram 包依赖 manager 包。
 type AccountStarter interface {
@@ -62,12 +64,12 @@ func (b *Bot) handleCommand(chatID, userID int64, command, args string) {
 	// /addaccount 和 /send 是两套独立的会话状态机，同一用户同一时刻只应有一种在进行，
 	// 避免两边的输入互相串到对方的 Advance 里产生难以理解的行为。
 	if command != "cancel" && (b.sessions.Get(userID) != nil || b.sendSessions.Get(userID) != nil) {
-		b.reply(chatID, "请先完成或使用 /cancel 取消当前操作")
+		b.reply(chatID, "⚠️ 请先完成或使用 /cancel 取消当前操作")
 		return
 	}
 
 	switch command {
-	case "start":
+	case "start", "help":
 		b.reply(chatID, helpText)
 	case "addaccount":
 		protocol := strings.ToLower(strings.TrimSpace(args))
@@ -75,18 +77,23 @@ func (b *Bot) handleCommand(chatID, userID int64, command, args string) {
 			b.reply(chatID, "用法: /addaccount 或 /addaccount pop3")
 			return
 		}
-		availableProviders := make(map[string]bool, len(b.oauthConfigs))
-		for provider := range b.oauthConfigs {
-			availableProviders[provider] = true
+		if protocol == "" {
+			keyboard := tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("IMAP（推荐）", "addproto:imap"),
+					tgbotapi.NewInlineKeyboardButtonData("POP3", "addproto:pop3"),
+				),
+			)
+			b.replyWithKeyboard(chatID, "请选择协议：", keyboard)
+			return
 		}
-		b.sessions.Start(userID, availableProviders, protocol)
-		b.reply(chatID, "请输入要添加的邮箱地址")
+		b.startAddAccountSession(chatID, userID, protocol)
 	case "send":
 		b.handleSendStart(chatID, userID)
 	case "cancel":
 		b.sessions.Clear(userID)
 		b.sendSessions.Clear(userID)
-		b.reply(chatID, "已取消当前操作")
+		b.reply(chatID, "🚫 已取消当前操作")
 	case "listaccounts":
 		b.handleListAccounts(chatID, userID)
 	case "delaccount":
@@ -94,6 +101,16 @@ func (b *Bot) handleCommand(chatID, userID int64, command, args string) {
 	default:
 		b.reply(chatID, helpText)
 	}
+}
+
+// startAddAccountSession 用给定协议开始 /addaccount 会话，供文字参数快捷方式和协议选择按钮共用。
+func (b *Bot) startAddAccountSession(chatID, userID int64, protocol string) {
+	availableProviders := make(map[string]bool, len(b.oauthConfigs))
+	for provider := range b.oauthConfigs {
+		availableProviders[provider] = true
+	}
+	b.sessions.Start(userID, availableProviders, protocol)
+	b.reply(chatID, "请输入要添加的邮箱地址")
 }
 
 func (b *Bot) handleSessionReply(chatID, userID int64, sess *Session, text string) {
@@ -108,7 +125,7 @@ func (b *Bot) handleSessionReply(chatID, userID int64, sess *Session, text strin
 	if finished {
 		b.sessions.Clear(userID)
 		if err := b.saveAccount(userID, sess.Draft); err != nil {
-			b.reply(chatID, "保存账号失败: "+err.Error())
+			b.reply(chatID, "❌ 保存账号失败: "+err.Error())
 			return
 		}
 		b.reply(chatID, reply)
@@ -120,7 +137,43 @@ func (b *Bot) handleSessionReply(chatID, userID int64, sess *Session, text strin
 		return
 	}
 
+	if kb := keyboardForStep(sess.Step); kb != nil {
+		b.replyWithKeyboard(chatID, reply, *kb)
+		return
+	}
 	b.reply(chatID, reply)
+}
+
+// keyboardForStep 返回 Advance() 推进到某个 Step 后的提示语应带的按钮，
+// 不需要按钮的 Step 返回 nil。
+func keyboardForStep(step Step) *tgbotapi.InlineKeyboardMarkup {
+	switch step {
+	case StepAuthMethod:
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("OAuth", "authmethod:oauth"),
+				tgbotapi.NewInlineKeyboardButtonData("密码/授权码", "authmethod:password"),
+			),
+		)
+		return &kb
+	case StepSMTPOptional:
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("是", "smtpopt:yes"),
+				tgbotapi.NewInlineKeyboardButtonData("否", "smtpopt:no"),
+			),
+		)
+		return &kb
+	case StepConfirm:
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("✅ 确认", "addconfirm:yes"),
+				tgbotapi.NewInlineKeyboardButtonData("🚫 取消", "addconfirm:no"),
+			),
+		)
+		return &kb
+	}
+	return nil
 }
 
 // startOAuthFlow 发起 device flow：立刻回复用户授权链接和一次性代码，然后在后台
@@ -129,18 +182,18 @@ func (b *Bot) startOAuthFlow(chatID, userID int64, sess *Session) {
 	cfg, ok := b.oauthConfigs[sess.Draft.OAuthProvider]
 	if !ok {
 		b.sessions.Clear(userID)
-		b.reply(chatID, "该 OAuth 登录方式未配置，请使用密码/授权码方式添加账号")
+		b.reply(chatID, "❌ 该 OAuth 登录方式未配置，请使用密码/授权码方式添加账号")
 		return
 	}
 
 	resp, err := oauth.StartDeviceFlow(b.ctx, cfg)
 	if err != nil {
 		b.sessions.Clear(userID)
-		b.reply(chatID, "发起 OAuth 授权失败: "+err.Error())
+		b.reply(chatID, "❌ 发起 OAuth 授权失败: "+err.Error())
 		return
 	}
 
-	b.reply(chatID, fmt.Sprintf("请在浏览器打开 %s 并输入代码 %s 完成授权（最多等待8分钟）", resp.VerificationURI, resp.UserCode))
+	b.reply(chatID, fmt.Sprintf("🔐 请在浏览器打开 %s 并输入代码 %s 完成授权（最多等待8分钟）", resp.VerificationURI, resp.UserCode))
 
 	go func() {
 		token, err := oauth.PollToken(b.ctx, cfg, resp)
@@ -153,12 +206,13 @@ func (b *Bot) startOAuthFlow(chatID, userID int64, sess *Session) {
 
 		if err != nil {
 			b.sessions.Clear(userID)
-			b.reply(chatID, "OAuth 授权失败或超时: "+err.Error())
+			b.reply(chatID, "❌ OAuth 授权失败或超时: "+err.Error())
 			return
 		}
 
 		reply := sess.CompleteOAuth(token.AccessToken, token.RefreshToken, token.Expiry)
-		b.reply(chatID, reply)
+		kb := keyboardForStep(StepConfirm)
+		b.replyWithKeyboard(chatID, reply, *kb)
 	}()
 }
 
@@ -212,33 +266,50 @@ func (b *Bot) saveAccount(userID int64, draft Draft) error {
 }
 
 func (b *Bot) handleListAccounts(chatID, userID int64) {
-	accounts, err := db.ListAccountsByUser(b.db, userID)
+	text, keyboard, err := b.renderAccountsList(userID)
 	if err != nil {
-		b.reply(chatID, "查询账号失败: "+err.Error())
+		b.reply(chatID, "❌ 查询账号失败: "+err.Error())
 		return
 	}
-	if len(accounts) == 0 {
-		b.reply(chatID, "还没有添加任何账号，使用 /addaccount 添加")
+	if len(keyboard.InlineKeyboard) == 0 {
+		b.reply(chatID, text)
 		return
+	}
+	b.replyWithKeyboard(chatID, text, keyboard)
+}
+
+// renderAccountsList 渲染账号列表文本和每个账号的删除按钮，供 /listaccounts 文字命令
+// 和删除后重新渲染的回调共用。没有账号时 keyboard 为空（InlineKeyboard 为 nil）。
+func (b *Bot) renderAccountsList(userID int64) (string, tgbotapi.InlineKeyboardMarkup, error) {
+	accounts, err := db.ListAccountsByUser(b.db, userID)
+	if err != nil {
+		return "", tgbotapi.InlineKeyboardMarkup{}, err
+	}
+	if len(accounts) == 0 {
+		return "还没有添加任何账号，使用 /addaccount 添加", tgbotapi.InlineKeyboardMarkup{}, nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString("已添加的账号：\n")
+	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, a := range accounts {
-		status := "启用"
+		status := "✅ 启用"
 		if !a.Enabled {
-			status = "已停用"
+			status = "⛔ 已停用"
 		}
 		protocol := strings.ToUpper(a.Protocol)
 		fmt.Fprintf(&sb, "#%d %s [%s %s:%d] [%s]\n", a.ID, a.Email, protocol, a.IMAPHost, a.IMAPPort, status)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🗑️ 删除 #%d", a.ID), fmt.Sprintf("del:%d", a.ID)),
+		))
 	}
-	b.reply(chatID, sb.String())
+	return sb.String(), tgbotapi.NewInlineKeyboardMarkup(rows...), nil
 }
 
 func (b *Bot) handleSendStart(chatID, userID int64) {
 	accounts, err := db.ListAccountsByUser(b.db, userID)
 	if err != nil {
-		b.reply(chatID, "查询账号失败: "+err.Error())
+		b.reply(chatID, "❌ 查询账号失败: "+err.Error())
 		return
 	}
 
@@ -255,12 +326,13 @@ func (b *Bot) handleSendStart(chatID, userID int64) {
 
 	b.sendSessions.Start(userID, sendable)
 
-	var sb strings.Builder
-	sb.WriteString("请选择发件账号（回复编号）：\n")
+	var rows [][]tgbotapi.InlineKeyboardButton
 	for i, a := range sendable {
-		fmt.Fprintf(&sb, "%d. %s\n", i+1, a.Email)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(a.Email, fmt.Sprintf("sendacc:%d", i+1)),
+		))
 	}
-	b.reply(chatID, sb.String())
+	b.replyWithKeyboard(chatID, "请选择发件账号：", tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
 func (b *Bot) handleSendSessionReply(chatID, userID int64, sess *SendSession, text string) {
@@ -276,13 +348,23 @@ func (b *Bot) handleSendSessionReply(chatID, userID int64, sess *SendSession, te
 		b.sendSessions.Clear(userID)
 		b.reply(chatID, reply)
 		if err := b.sendMail(userID, sess.Draft); err != nil {
-			b.reply(chatID, "发信失败: "+err.Error())
+			b.reply(chatID, "❌ 发信失败: "+err.Error())
 			return
 		}
-		b.reply(chatID, "邮件已发送")
+		b.reply(chatID, "✅ 邮件已发送")
 		return
 	}
 
+	if sess.Step == SendStepConfirm {
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("✅ 确认", "sendconfirm:yes"),
+				tgbotapi.NewInlineKeyboardButtonData("🚫 取消", "sendconfirm:no"),
+			),
+		)
+		b.replyWithKeyboard(chatID, reply, kb)
+		return
+	}
 	b.reply(chatID, reply)
 }
 
@@ -320,22 +402,28 @@ func (b *Bot) handleDelAccount(chatID, userID int64, args string) {
 		return
 	}
 
-	account, err := db.GetAccountByID(b.db, id)
-	if err == sql.ErrNoRows || (err == nil && account.TelegramUserID != userID) {
-		b.reply(chatID, "找不到该账号")
+	if err := b.deleteAccount(userID, id); err != nil {
+		b.reply(chatID, "❌ "+err.Error())
 		return
 	}
+	b.reply(chatID, "✅ 账号已删除")
+}
+
+// deleteAccount 校验账号归属后删除，供 /delaccount 文字命令和列表删除按钮共用。
+func (b *Bot) deleteAccount(userID, id int64) error {
+	account, err := db.GetAccountByID(b.db, id)
+	if err == sql.ErrNoRows || (err == nil && account.TelegramUserID != userID) {
+		return fmt.Errorf("找不到该账号")
+	}
 	if err != nil {
-		b.reply(chatID, "查询账号失败: "+err.Error())
-		return
+		return fmt.Errorf("查询账号失败: %w", err)
 	}
 
 	b.manager.Stop(id)
 	if err := db.DeleteAccount(b.db, id); err != nil {
-		b.reply(chatID, "删除账号失败: "+err.Error())
-		return
+		return fmt.Errorf("删除账号失败: %w", err)
 	}
-	b.reply(chatID, "账号已删除")
+	return nil
 }
 
 func (b *Bot) reply(chatID int64, text string) {

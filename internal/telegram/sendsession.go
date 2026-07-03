@@ -47,7 +47,7 @@ func (s *SendSession) Advance(text string) (reply string, finished bool, cancell
 	case SendStepChooseAccount:
 		idx, err := strconv.Atoi(text)
 		if err != nil || idx < 1 || idx > len(s.Accounts) {
-			return "请输入有效的编号", false, false
+			return "⚠️ 请输入有效的编号", false, false
 		}
 		s.Draft.AccountID = s.Accounts[idx-1].ID
 		s.Step = SendStepTo
@@ -55,7 +55,7 @@ func (s *SendSession) Advance(text string) (reply string, finished bool, cancell
 
 	case SendStepTo:
 		if !strings.Contains(text, "@") {
-			return "邮箱地址格式不对，请重新输入", false, false
+			return "⚠️ 邮箱地址格式不对，请重新输入", false, false
 		}
 		s.Draft.To = text
 		s.Step = SendStepSubject
@@ -74,20 +74,20 @@ func (s *SendSession) Advance(text string) (reply string, finished bool, cancell
 	case SendStepConfirm:
 		switch text {
 		case "确认", "yes", "y", "Y":
-			return "正在发送...", true, false
+			return "✅ 正在发送...", true, false
 		case "取消", "no", "n", "N":
-			return "已取消发信", false, true
+			return "🚫 已取消发信", false, true
 		default:
-			return "请回复\"确认\"发送，或\"取消\"放弃", false, false
+			return "⚠️ 请回复\"确认\"发送，或\"取消\"放弃", false, false
 		}
 	}
 
-	return "内部状态异常，请重新执行 /send", false, true
+	return "⚠️ 内部状态异常，请重新执行 /send", false, true
 }
 
 func (s *SendSession) confirmPrompt() string {
 	return fmt.Sprintf(
-		"请确认邮件信息：\n收件人: %s\n主题: %s\n正文: %s\n\n回复\"确认\"发送，回复\"取消\"放弃",
+		"📋 请确认邮件信息：\n收件人: %s\n主题: %s\n正文: %s\n\n回复\"确认\"发送，回复\"取消\"放弃",
 		s.Draft.To, s.Draft.Subject, s.Draft.Body,
 	)
 }
