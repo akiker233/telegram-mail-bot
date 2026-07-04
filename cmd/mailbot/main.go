@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -27,30 +27,35 @@ var version string
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "config" {
 		if err := config.RunReconfigure(); err != nil {
-			log.Fatalf("重新配置失败: %v", err)
+			slog.Error("重新配置失败", "err", err)
+			os.Exit(1)
 		}
 		return
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "update" {
 		if err := update.Run(version); err != nil {
-			log.Fatalf("更新失败: %v", err)
+			slog.Error("更新失败", "err", err)
+			os.Exit(1)
 		}
 		os.Exit(0)
 	}
 
 	if err := config.RunInteractiveSetupIfNeeded(); err != nil {
-		log.Fatalf("初始化配置失败: %v", err)
+		slog.Error("初始化配置失败", "err", err)
+		os.Exit(1)
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("加载配置失败: %v", err)
+		slog.Error("加载配置失败", "err", err)
+		os.Exit(1)
 	}
 
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
-		log.Fatalf("打开数据库失败: %v", err)
+		slog.Error("打开数据库失败", "err", err)
+		os.Exit(1)
 	}
 	defer database.Close()
 
@@ -72,35 +77,40 @@ func main() {
 
 	bot, err = telegram.New(cfg.TelegramBotToken, database, mgr, cfg.AllowedUsers, encryptionKey, oauthConfigs)
 	if err != nil {
-		log.Fatalf("初始化 Telegram 机器人失败: %v", err)
+		slog.Error("初始化 Telegram 机器人失败", "err", err)
+		os.Exit(1)
 	}
+
+	// 恢复进程重启前未完成的 /addaccount 会话。
+	bot.RestoreSessions()
 
 	if err := mgr.StartAll(ctx); err != nil {
-		log.Fatalf("恢复邮箱监听失败: %v", err)
+		slog.Error("恢复邮箱监听失败", "err", err)
+		os.Exit(1)
 	}
 
-	log.Println("机器人已启动")
+	slog.Info("机器人已启动")
 	bot.Run(ctx)
-	log.Println("机器人已退出")
+	slog.Info("机器人已退出")
 }
 
 // logStartupInfo 打印启动时的关键信息，方便排查部署问题。
 func logStartupInfo(dbPath string, oauthConfigs map[string]oauth2.Config) {
-	log.Printf("仓库地址: %s", repoURL)
+	slog.Info("仓库地址: " + repoURL)
 	if version == "" {
-		log.Println("版本: 开发版本")
+		slog.Info("版本: 开发版本")
 	} else {
-		log.Printf("版本: %s", version)
+		slog.Info("版本: " + version)
 	}
-	log.Printf("数据库路径: %s", dbPath)
+	slog.Info("数据库路径: " + dbPath)
 
 	if len(oauthConfigs) == 0 {
-		log.Println("OAuth: 未配置")
+		slog.Info("OAuth: 未配置")
 		return
 	}
 	providers := make([]string, 0, len(oauthConfigs))
 	for provider := range oauthConfigs {
 		providers = append(providers, provider)
 	}
-	log.Printf("OAuth: 已加载 %s", strings.Join(providers, ", "))
+	slog.Info("OAuth: 已加载 " + strings.Join(providers, ", "))
 }

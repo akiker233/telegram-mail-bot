@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	dialTimeout    = 10 * time.Second
-	commandTimeout = 30 * time.Second
-	idleRestart    = 29 * time.Minute // RFC 2177 建议 IDLE 不超过 30 分钟
-	pollInterval   = 60 * time.Second
-	minBackoff     = 5 * time.Second
-	maxBackoff     = 60 * time.Second
+	dialTimeout      = 10 * time.Second
+	commandTimeout   = 30 * time.Second
+	idleRestart      = 29 * time.Minute // RFC 2177 建议 IDLE 不超过 30 分钟
+	pollInterval     = 60 * time.Second
+	minBackoff       = 5 * time.Second
+	maxBackoff       = 60 * time.Second
+	authErrorBackoff = 5 * time.Minute // 认证失败后的重试间隔，给用户时间重新授权
 )
 
 var clientID = imapid.ID{
@@ -51,7 +52,10 @@ type AuthError struct {
 func (e *AuthError) Error() string { return e.Err.Error() }
 func (e *AuthError) Unwrap() error { return e.Err }
 
-// AuthErrorFunc 在账号发生认证类永久错误（无法通过重试恢复）时被调用一次，Listen 随即返回。
+// AuthErrorFunc 在账号发生认证类错误时被调用一次。与之前逻辑不同，Listen 现在
+// 不会就此退出——它会以 authErrorBackoff 间隔持续重试，这样用户在重新授权后
+// 无需手动删除和重新添加账号就能自动恢复监听。onAuthError 每个认证错误事件只调用一次，
+// 避免持续重试期间反复刷通知骚扰用户。
 type AuthErrorFunc func(accountID int64, err error)
 
 // NotifyFunc 在新邮件到达时被调用。
@@ -65,10 +69,13 @@ type StateStore interface {
 
 // Listen 持续监听一个账号的 INBOX，直到 ctx 被取消。
 // 内部处理断线重连（指数退避）和 IDLE 不支持时的轮询降级。
-// onAuthError 可以为 nil；非 nil 时在遇到认证类永久错误（凭证错误、OAuth token 失效等）时
-// 被调用一次，随后 Listen 直接返回，不再重试——这类错误重试也不会自愈，无限重试只会刷日志。
+// onAuthError 可以为 nil；非 nil 时在遇到认证类错误（凭证错误、OAuth token 失效等）时
+// 被调用一次——之后 Listen 不会退出，而是以 authErrorBackoff 间隔持续重试，
+// 用户重新授权后监听会自动恢复，无需手动删除和重新添加账号。
 func Listen(ctx context.Context, cfg AccountConfig, store StateStore, notify NotifyFunc, onAuthError AuthErrorFunc) {
 	backoff := minBackoff
+	hasAuthErr := false
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -81,25 +88,32 @@ func Listen(ctx context.Context, cfg AccountConfig, store StateStore, notify Not
 
 		var authErr *AuthError
 		if errors.As(err, &authErr) {
-			log.Printf("mail: account %d: authentication failed, giving up: %v", cfg.AccountID, authErr)
-			if onAuthError != nil {
+			slog.Warn("mail: authentication failed, will retry", "account_id", cfg.AccountID, "error", authErr)
+			if onAuthError != nil && !hasAuthErr {
 				onAuthError(cfg.AccountID, authErr.Err)
+				hasAuthErr = true
 			}
-			return
-		}
-		if err != nil {
-			log.Printf("mail: account %d: session error: %v", cfg.AccountID, err)
+			backoff = authErrorBackoff
+		} else {
+			hasAuthErr = false
+			if err != nil {
+				slog.Warn("mail: session error", "account_id", cfg.AccountID, "error", err)
+			}
+
+			if err == nil {
+				backoff = minBackoff
+			} else {
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
 		}
 
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
-		}
-
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
 		}
 	}
 }
@@ -153,6 +167,9 @@ func dial(cfg AccountConfig) (*client.Client, error) {
 
 // authenticate 按账号的认证方式登录。密码登录失败和 XOAUTH2 认证失败都归类为 AuthError——
 // 这类错误是永久性的（凭证不对、token 被撤销），重试不会自愈，需要用户重新配置账号才能解决。
+// TokenProvider 失败则不一定：它自己会把不可恢复的错误（refresh token 被撤销/过期）包成
+// *AuthError，其余错误（刷新时网络抖动等）原样返回，%w 保留后 errors.As 仍能识别出前者，
+// 后者则会走 Listen() 的指数退避重试，而不是被误判为永久失效。
 func authenticate(c *client.Client, cfg AccountConfig) error {
 	if cfg.TokenProvider == nil {
 		if err := c.Login(cfg.Username, cfg.Password); err != nil {
@@ -163,7 +180,7 @@ func authenticate(c *client.Client, cfg AccountConfig) error {
 
 	token, err := cfg.TokenProvider()
 	if err != nil {
-		return &AuthError{Err: fmt.Errorf("get oauth token: %w", err)}
+		return fmt.Errorf("get oauth token: %w", err)
 	}
 	if err := c.Authenticate(newXOAUTH2Client(cfg.Username, token)); err != nil {
 		return &AuthError{Err: err}

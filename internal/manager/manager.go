@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"html"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -95,7 +95,7 @@ func (m *Manager) Start(parent context.Context, account *db.Account) error {
 		Username:  account.IMAPUsername,
 	}
 
-	if account.AuthType == "oauth" {
+	if account.AuthType == db.AuthTypeOAuth {
 		oauthCfg, ok := m.oauthConfigs[account.OAuthProvider]
 		if !ok {
 			cancel()
@@ -129,20 +129,31 @@ func (m *Manager) notifyFunc(account *db.Account) mail.NotifyFunc {
 func (m *Manager) authErrorFunc(account *db.Account) mail.AuthErrorFunc {
 	telegramUserID := account.TelegramUserID
 	return func(accountID int64, err error) {
-		log.Printf("manager: account %d: permanent auth error: %v", accountID, err)
-		m.send(telegramUserID, fmt.Sprintf("账号 %s 的授权已失效（%v），请使用 /delaccount %d 删除后重新添加", account.Label, err, accountID), "")
+		slog.Warn("manager: auth error, will retry", "account_id", accountID, "error", err)
+		if account.AuthType == db.AuthTypeOAuth {
+			m.send(telegramUserID, fmt.Sprintf("账号 %s 的 OAuth 授权已失效（%v），请使用 /reauthorize %d 重新授权。系统会每隔 5 分钟自动重试连接。", account.Label, err, accountID), "")
+		} else {
+			m.send(telegramUserID, fmt.Sprintf("账号 %s 的密码认证失败（%v），请检查密码是否正确。系统会每隔 5 分钟自动重试连接。", account.Label, err), "")
+		}
 	}
 }
 
 // tokenProvider 返回一个每次调用都会拿到有效 access token 的回调，供 IMAP 长连接
 // 断线重连时重新取用（一次性 token 字符串在重连时可能已经过期）。
+// 只有 oauth.IsPermanent 判定为不可恢复（refresh token 被撤销/过期）时才包成
+// *mail.AuthError 让 Listen 放弃重试；其余错误（网络抖动等瞬时故障）原样返回，
+// 让 Listen 按已有的指数退避逻辑重试，而不是要求用户删除账号重新添加。
 func (m *Manager) tokenProvider(ctx context.Context, oauthCfg oauth2.Config, accountID int64) func() (string, error) {
 	return func() (string, error) {
 		account, err := db.GetAccountByID(m.db, accountID)
 		if err != nil {
 			return "", fmt.Errorf("reload account: %w", err)
 		}
-		return oauth.RefreshIfNeeded(ctx, m.db, m.key, oauthCfg, account)
+		token, err := oauth.RefreshIfNeeded(ctx, m.db, m.key, oauthCfg, account)
+		if err != nil && oauth.IsPermanent(err) {
+			return "", &mail.AuthError{Err: err}
+		}
+		return token, err
 	}
 }
 

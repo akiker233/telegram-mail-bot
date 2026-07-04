@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -39,6 +40,15 @@ CREATE TABLE IF NOT EXISTS pop3_seen_uids (
 	FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_pop3_seen_uids_seen_at ON pop3_seen_uids(account_id, seen_at);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	user_id INTEGER NOT NULL,
+	session_type TEXT NOT NULL,
+	step INTEGER NOT NULL DEFAULT 0,
+	draft_json TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, session_type)
+);
 `
 
 // accountColumns 列出本项目迭代过程中追加到 accounts 表的列。
@@ -69,6 +79,25 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("db: enable foreign keys: %w", err)
 	}
+	// WAL 模式：读写并发更好，适合多 goroutine 场景（Manager 多账号监听）。
+	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("db: enable wal: %w", err)
+	}
+	// 锁等待超时 5 秒，避免并发写入时立即报 SQLITE_BUSY。
+	if _, err := db.Exec("PRAGMA busy_timeout=5000;"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("db: set busy_timeout: %w", err)
+	}
+	// WAL 模式下 synchronous=NORMAL 即可保证持久性，且性能优于 FULL。
+	if _, err := db.Exec("PRAGMA synchronous=NORMAL;"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("db: set synchronous: %w", err)
+	}
+	// SQLite 是单写者，限制最大打开连接数避免过多 WAL 文件。
+	db.SetMaxOpenConns(4)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("db: create schema: %w", err)

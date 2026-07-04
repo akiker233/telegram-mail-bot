@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	pop3 "github.com/knadh/go-pop3"
@@ -41,9 +41,12 @@ var ErrUIDLUnsupported = fmt.Errorf("mail: pop3 server does not support UIDL")
 
 // ListenPOP3 持续轮询一个 POP3 账号的收件箱，直到 ctx 被取消。
 // POP3 没有 IDLE 概念，每轮都是新建连接、拉取增量、断开，不长期占用连接。
+// 遇到认证错误时不会永久停止，而是以 authErrorBackoff 间隔持续重试，
+// 用户重新授权后监听会自动恢复。
 func ListenPOP3(ctx context.Context, cfg POP3AccountConfig, store POP3StateStore, notify NotifyFunc, onAuthError AuthErrorFunc) {
 	backoff := minBackoff
 	lastPrune := time.Time{}
+	hasAuthErr := false
 
 	for {
 		if ctx.Err() != nil {
@@ -53,23 +56,31 @@ func ListenPOP3(ctx context.Context, cfg POP3AccountConfig, store POP3StateStore
 		err := pop3SyncOnce(cfg, store, notify)
 
 		if err == ErrUIDLUnsupported {
-			log.Printf("mail: account %d: pop3 server does not support UIDL, giving up", cfg.AccountID)
+			slog.Warn("mail: pop3 server does not support UIDL, giving up", "account_id", cfg.AccountID)
 			if onAuthError != nil {
 				onAuthError(cfg.AccountID, err)
 			}
 			return
 		}
 		if authErr, ok := err.(*AuthError); ok {
-			log.Printf("mail: account %d: pop3 authentication failed, giving up: %v", cfg.AccountID, authErr)
-			if onAuthError != nil {
+			slog.Warn("mail: pop3 authentication failed, will retry", "account_id", cfg.AccountID, "error", authErr)
+			if onAuthError != nil && !hasAuthErr {
 				onAuthError(cfg.AccountID, authErr.Err)
+				hasAuthErr = true
 			}
-			return
+			wait := authErrorBackoff
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+			continue
 		}
 
+		hasAuthErr = false
 		wait := pollInterval
 		if err != nil {
-			log.Printf("mail: account %d: pop3 session error: %v", cfg.AccountID, err)
+			slog.Warn("mail: pop3 session error", "account_id", cfg.AccountID, "error", err)
 			wait = backoff
 			backoff *= 2
 			if backoff > maxBackoff {
@@ -79,7 +90,7 @@ func ListenPOP3(ctx context.Context, cfg POP3AccountConfig, store POP3StateStore
 			backoff = minBackoff
 			if time.Since(lastPrune) > pruneInterval {
 				if pruneErr := store.PruneSeenUIDs(cfg.AccountID, time.Now().Add(-seenUIDRetain)); pruneErr != nil {
-					log.Printf("mail: account %d: prune pop3 seen uids: %v", cfg.AccountID, pruneErr)
+					slog.Warn("mail: prune pop3 seen uids", "account_id", cfg.AccountID, "error", pruneErr)
 				}
 				lastPrune = time.Now()
 			}
@@ -126,12 +137,12 @@ func pop3SyncOnce(cfg POP3AccountConfig, store POP3StateStore, notify NotifyFunc
 	for _, msg := range pending {
 		raw, err := conn.RetrRaw(msg.ID)
 		if err != nil {
-			log.Printf("mail: account %d: retr message %d: %v", cfg.AccountID, msg.ID, err)
+			slog.Warn("mail: retr message", "account_id", cfg.AccountID, "msg_id", msg.ID, "error", err)
 			continue
 		}
 		summary, err := BuildSummary(bytes.NewReader(raw.Bytes()))
 		if err != nil {
-			log.Printf("mail: account %d: parse message %d: %v", cfg.AccountID, msg.ID, err)
+			slog.Warn("mail: parse message", "account_id", cfg.AccountID, "msg_id", msg.ID, "error", err)
 			continue
 		}
 		notify(cfg.AccountID, summary)

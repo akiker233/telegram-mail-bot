@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +29,7 @@ const helpText = `👋 我可以把邮箱新邮件转发到 Telegram，也能用
 🗑️ /delaccount <id> - 删除一个账号
 📤 /send - 用已添加的账号发一封邮件
 📊 /status - 查看账号状态
+🔑 /reauthorize <id> - 重新授权 OAuth 账号（授权失效时使用）
 🚫 /cancel - 取消当前正在进行的操作`
 
 // AccountStarter 抽象了账号添加成功后启动监听的动作，避免 telegram 包依赖 manager 包。
@@ -102,6 +103,8 @@ func (b *Bot) handleCommand(chatID, userID int64, command, args string) {
 		b.handleDelAccount(chatID, userID, args)
 	case "status":
 		b.handleAccountStatus(chatID, userID)
+	case "reauthorize":
+		b.handleReauthorize(chatID, userID, args)
 	default:
 		b.reply(chatID, helpText)
 	}
@@ -140,6 +143,9 @@ func (b *Bot) handleSessionReply(chatID, userID int64, sess *Session, text strin
 		b.startOAuthFlow(chatID, userID, sess)
 		return
 	}
+
+	// 非终态步数变化后持久化当前会话状态。
+	b.sessions.Persist(userID)
 
 	if kb := keyboardForStep(sess.Step); kb != nil {
 		b.replyWithKeyboard(chatID, reply, *kb)
@@ -220,6 +226,81 @@ func (b *Bot) startOAuthFlow(chatID, userID int64, sess *Session) {
 	}()
 }
 
+// handleReauthorize 重新授权一个已有的 OAuth 账号。
+// 适用场景：OAuth refresh token 过期/被撤销后，用户无需删除账号重新添加。
+func (b *Bot) handleReauthorize(chatID, userID int64, args string) {
+	accountID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
+	if err != nil {
+		b.reply(chatID, "用法: /reauthorize <account_id>")
+		return
+	}
+
+	account, err := db.GetAccountByID(b.db, accountID)
+	if err != nil {
+		b.reply(chatID, "❌ 未找到该账号")
+		return
+	}
+	if account.TelegramUserID != userID {
+		b.reply(chatID, "❌ 该账号不属于你")
+		return
+	}
+	if account.AuthType != db.AuthTypeOAuth {
+		b.reply(chatID, "❌ 该账号使用密码认证，无需重新授权")
+		return
+	}
+
+	cfg, ok := b.oauthConfigs[account.OAuthProvider]
+	if !ok {
+		b.reply(chatID, "❌ 该 OAuth 登录方式未配置")
+		return
+	}
+
+	resp, err := oauth.StartDeviceFlow(b.ctx, cfg)
+	if err != nil {
+		b.reply(chatID, "❌ 发起 OAuth 授权失败: "+err.Error())
+		return
+	}
+
+	b.reply(chatID, fmt.Sprintf("🔐 请在浏览器打开 %s 并输入代码 %s 完成授权（最多等待8分钟）", resp.VerificationURI, resp.UserCode))
+
+	go func() {
+		token, err := oauth.PollToken(b.ctx, cfg, resp)
+		if err != nil {
+			b.reply(chatID, "❌ OAuth 重新授权失败或超时: "+err.Error())
+			return
+		}
+
+		// 加密新 token 并更新数据库
+		encryptedAccess, err := crypto.Encrypt(b.encryptionKey, token.AccessToken)
+		if err != nil {
+			b.reply(chatID, "❌ 加密 token 失败: "+err.Error())
+			return
+		}
+		encryptedRefresh, err := crypto.Encrypt(b.encryptionKey, token.RefreshToken)
+		if err != nil {
+			b.reply(chatID, "❌ 加密 token 失败: "+err.Error())
+			return
+		}
+
+		account.OAuthAccessToken = encryptedAccess
+		account.OAuthRefreshToken = encryptedRefresh
+		account.OAuthTokenExpiry = token.Expiry
+		if err := db.UpdateAccountOAuthTokens(b.db, account); err != nil {
+			b.reply(chatID, "❌ 更新 token 失败: "+err.Error())
+			return
+		}
+
+		// 重启监听，让新 token 立即生效。
+		b.manager.Stop(accountID)
+		if err := b.manager.Start(b.ctx, account); err != nil {
+			b.reply(chatID, "✅ 授权已更新，但启动监听失败: "+err.Error())
+			return
+		}
+
+		b.reply(chatID, fmt.Sprintf("✅ 账号 %s 已重新授权，监听已恢复", account.Label))
+	}()
+}
+
 func (b *Bot) saveAccount(userID int64, draft Draft) error {
 	protocol := draft.Protocol
 	if protocol == "" {
@@ -237,7 +318,7 @@ func (b *Bot) saveAccount(userID int64, draft Draft) error {
 		Protocol:       protocol,
 	}
 
-	if draft.AuthType == "oauth" {
+	if draft.AuthType == db.AuthTypeOAuth {
 		encryptedAccess, err := crypto.Encrypt(b.encryptionKey, draft.OAuthAccessToken)
 		if err != nil {
 			return fmt.Errorf("加密 access token 失败: %w", err)
@@ -246,7 +327,7 @@ func (b *Bot) saveAccount(userID int64, draft Draft) error {
 		if err != nil {
 			return fmt.Errorf("加密 refresh token 失败: %w", err)
 		}
-		account.AuthType = "oauth"
+		account.AuthType = db.AuthTypeOAuth
 		account.OAuthProvider = draft.OAuthProvider
 		account.OAuthAccessToken = encryptedAccess
 		account.OAuthRefreshToken = encryptedRefresh
@@ -256,7 +337,7 @@ func (b *Bot) saveAccount(userID int64, draft Draft) error {
 		if err != nil {
 			return fmt.Errorf("加密密码失败: %w", err)
 		}
-		account.AuthType = "password"
+		account.AuthType = db.AuthTypePassword
 		account.EncryptedPassword = encryptedPassword
 	}
 
@@ -342,7 +423,7 @@ func (b *Bot) renderAccountStatus(userID int64) (string, error) {
 			running = "🟢 运行中"
 		}
 		authType := "密码"
-		if a.AuthType == "oauth" {
+		if a.AuthType == db.AuthTypeOAuth {
 			authType = "OAuth"
 		}
 
@@ -418,6 +499,9 @@ func (b *Bot) handleSendSessionReply(chatID, userID int64, sess *SendSession, te
 		return
 	}
 
+	// 非终态步数变化后持久化当前会话状态。
+	b.sendSessions.Persist(userID)
+
 	if sess.Step == SendStepConfirm {
 		kb := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -440,21 +524,32 @@ func (b *Bot) sendMail(userID int64, draft SendDraft) error {
 		return fmt.Errorf("该账号不可用于发信")
 	}
 
-	password, err := crypto.Decrypt(b.encryptionKey, account.EncryptedPassword)
-	if err != nil {
-		return fmt.Errorf("解密密码失败: %w", err)
+	cfg := smtp.Config{
+		Host:     account.SMTPHost,
+		Port:     account.SMTPPort,
+		Username: account.IMAPUsername,
+		From:     account.Email,
 	}
 
-	return smtp.Send(
-		smtp.Config{
-			Host:     account.SMTPHost,
-			Port:     account.SMTPPort,
-			Username: account.IMAPUsername,
-			Password: password,
-			From:     account.Email,
-		},
-		smtp.Message{To: draft.To, Subject: draft.Subject, Body: draft.Body},
-	)
+	if account.AuthType == db.AuthTypeOAuth {
+		oauthCfg, ok := b.oauthConfigs[account.OAuthProvider]
+		if !ok {
+			return fmt.Errorf("OAuth provider %q 未配置", account.OAuthProvider)
+		}
+		accessToken, err := oauth.RefreshIfNeeded(b.ctx, b.db, b.encryptionKey, oauthCfg, account)
+		if err != nil {
+			return fmt.Errorf("获取 OAuth token 失败: %w", err)
+		}
+		cfg.Auth = smtp.NewXOAUTH2Auth(account.IMAPUsername, accessToken)
+	} else {
+		password, err := crypto.Decrypt(b.encryptionKey, account.EncryptedPassword)
+		if err != nil {
+			return fmt.Errorf("解密密码失败: %w", err)
+		}
+		cfg.Password = password
+	}
+
+	return smtp.Send(cfg, smtp.Message{To: draft.To, Subject: draft.Subject, Body: draft.Body})
 }
 
 func (b *Bot) handleDelAccount(chatID, userID int64, args string) {
@@ -507,13 +602,13 @@ func (b *Bot) replyWithParseMode(chatID int64, text string, parseMode string) {
 
 	if _, err := b.api.Send(msg); err != nil {
 		if parseMode != "" && strings.Contains(err.Error(), "can't parse entities") {
-			log.Printf("telegram: HTML parse failed for chat %d, falling back to plain text: %v", chatID, err)
+			slog.Warn("telegram: HTML parse failed, falling back to plain text", "chat_id", chatID, "error", err)
 			plain := tgbotapi.NewMessage(chatID, htmlTagRe.ReplaceAllString(text, ""))
 			if _, retryErr := b.api.Send(plain); retryErr != nil {
-				log.Printf("telegram: plain text fallback also failed for chat %d: %v", chatID, retryErr)
+				slog.Warn("telegram: plain text fallback also failed", "chat_id", chatID, "error", retryErr)
 			}
 			return
 		}
-		log.Printf("telegram: send message to chat %d failed: %v", chatID, err)
+		slog.Warn("telegram: send message failed", "chat_id", chatID, "error", err)
 	}
 }

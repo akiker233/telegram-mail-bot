@@ -90,7 +90,7 @@ func TestSendSessionConfirmCancel(t *testing.T) {
 }
 
 func TestSendSessionStoreStartGetClear(t *testing.T) {
-	store := NewSendSessionStore()
+	store := NewSendSessionStore(nil)
 	accounts := newTestAccounts()
 
 	if store.Get(1) != nil {

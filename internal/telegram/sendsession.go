@@ -1,10 +1,15 @@
 package telegram
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
+
+	"telegram-mail-bot/internal/db"
 )
 
 // SendStep 表示 /send 多轮问答的当前阶段。
@@ -97,11 +102,12 @@ func (s *SendSession) confirmPrompt() string {
 type SendSessionStore struct {
 	mu sync.Mutex
 	m  map[int64]*SendSession
+	db *sql.DB
 }
 
-// NewSendSessionStore 创建一个空的会话表。
-func NewSendSessionStore() *SendSessionStore {
-	return &SendSessionStore{m: make(map[int64]*SendSession)}
+// NewSendSessionStore 创建一个空的会话表。database 用于持久化，nil 时仅使用内存存储。
+func NewSendSessionStore(database *sql.DB) *SendSessionStore {
+	return &SendSessionStore{m: make(map[int64]*SendSession), db: database}
 }
 
 // Get 返回指定用户当前的会话，不存在返回 nil。
@@ -117,6 +123,7 @@ func (s *SendSessionStore) Start(userID int64, accounts []SendableAccount) *Send
 	defer s.mu.Unlock()
 	sess := &SendSession{Step: SendStepChooseAccount, Accounts: accounts}
 	s.m[userID] = sess
+	s.persistLocked(userID, sess)
 	return sess
 }
 
@@ -125,4 +132,39 @@ func (s *SendSessionStore) Clear(userID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.m, userID)
+	if s.db != nil {
+		if err := db.DeleteSession(s.db, userID, "send"); err != nil {
+			slog.Warn("telegram: delete send session", "user_id", userID, "error", err)
+		}
+	}
+}
+
+// Persist 在每次 Advance 推进状态后调用，将当前会话持久化到数据库。
+func (s *SendSessionStore) Persist(userID int64) {
+	s.mu.Lock()
+	sess := s.m[userID]
+	s.mu.Unlock()
+	if sess != nil {
+		s.persistLocked(userID, sess)
+	}
+}
+
+// persistLocked 在持有锁的情况下持久化会话到数据库。调用方必须持有 s.mu。
+func (s *SendSessionStore) persistLocked(userID int64, sess *SendSession) {
+	if s.db == nil {
+		return
+	}
+	draftJSON, err := json.Marshal(sess.Draft)
+	if err != nil {
+		slog.Warn("telegram: marshal send session", "user_id", userID, "error", err)
+		return
+	}
+	if err := db.UpsertSession(s.db, &db.StoredSession{
+		UserID:      userID,
+		SessionType: "send",
+		Step:        int(sess.Step),
+		DraftJSON:   string(draftJSON),
+	}); err != nil {
+		slog.Warn("telegram: persist send session", "user_id", userID, "error", err)
+	}
 }

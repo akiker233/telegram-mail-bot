@@ -99,6 +99,19 @@ func TestHTMLToTelegramHTMLEmptyBodyReturnsNotOK(t *testing.T) {
 	}
 }
 
+func TestHTMLToTelegramHTMLCollapsesBlankLines(t *testing.T) {
+	got, ok := htmlToTelegramHTML("<div>first</div><div><br></div><div></div><div><div></div></div><div>second</div>", summaryMaxRunes)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if strings.Contains(got, "\n\n\n") {
+		t.Errorf("expected consecutive blank lines to be collapsed, got: %q", got)
+	}
+	if !strings.Contains(got, "first") || !strings.Contains(got, "second") {
+		t.Errorf("expected both divs' text preserved, got: %q", got)
+	}
+}
+
 func TestHTMLToTelegramHTMLStructuralTagsBecomeNewlines(t *testing.T) {
 	got, ok := htmlToTelegramHTML("<div>first</div><div>second</div>", summaryMaxRunes)
 	if !ok {

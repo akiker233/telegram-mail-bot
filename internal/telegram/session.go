@@ -1,11 +1,16 @@
 package telegram
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"telegram-mail-bot/internal/db"
 )
 
 // Step 表示添加账号多轮问答的当前阶段。
@@ -35,8 +40,8 @@ type Draft struct {
 	SMTPHost string // 空字符串表示未配置发信
 	SMTPPort int
 
-	AuthType      string // "password"（默认）| "oauth"
-	OAuthProvider string // AuthType="oauth" 时的 "gmail" | "outlook"
+	AuthType      string // db.AuthTypePassword（默认）| db.AuthTypeOAuth
+	OAuthProvider string // AuthType=db.AuthTypeOAuth 时的 "gmail" | "outlook"
 	// OAuthAccessToken/OAuthRefreshToken/OAuthTokenExpiry 由 handlers.go 里异步完成 device flow
 	// 后填入，Advance 本身保持同步纯函数，不做网络 IO。
 	OAuthAccessToken  string
@@ -90,7 +95,7 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 	case StepAuthMethod:
 		switch strings.ToLower(text) {
 		case "oauth":
-			s.Draft.AuthType = "oauth"
+			s.Draft.AuthType = db.AuthTypeOAuth
 			if preset, ok := LookupPreset(s.Draft.Email); ok {
 				s.Draft.Host = preset.Host
 				s.Draft.Port = preset.Port
@@ -100,7 +105,7 @@ func (s *Session) Advance(text string) (reply string, finished bool, cancelled b
 			s.Step = StepOAuthPending
 			return "", false, false // 具体的授权链接由 handlers.go 发起 device flow 后发送
 		case "密码", "password":
-			s.Draft.AuthType = "password"
+			s.Draft.AuthType = db.AuthTypePassword
 			if preset, ok := LookupPreset(s.Draft.Email); ok {
 				s.applyPreset(preset)
 				s.Draft.fromPreset = true
@@ -243,7 +248,7 @@ func (s *Session) confirmPrompt() string {
 		smtpInfo = fmt.Sprintf("%s:%d", s.Draft.SMTPHost, s.Draft.SMTPPort)
 	}
 	authInfo := "密码/授权码"
-	if s.Draft.AuthType == "oauth" {
+	if s.Draft.AuthType == db.AuthTypeOAuth {
 		authInfo = "OAuth（" + s.Draft.OAuthProvider + "）"
 	}
 	protocolLabel := "IMAP"
@@ -257,15 +262,16 @@ func (s *Session) confirmPrompt() string {
 }
 
 // SessionStore 是按 Telegram 用户 ID 索引的内存会话表。
-// 会话是短期交互状态，进程重启后用户重新走一遍 /addaccount 即可，不做持久化。
+// 会话是短期交互状态。同时持久化到 SQLite，进程重启后可恢复未完成的会话。
 type SessionStore struct {
 	mu sync.Mutex
 	m  map[int64]*Session
+	db *sql.DB
 }
 
-// NewSessionStore 创建一个空的会话表。
-func NewSessionStore() *SessionStore {
-	return &SessionStore{m: make(map[int64]*Session)}
+// NewSessionStore 创建一个空的会话表。database 用于持久化，nil 时仅使用内存存储。
+func NewSessionStore(database *sql.DB) *SessionStore {
+	return &SessionStore{m: make(map[int64]*Session), db: database}
 }
 
 // Get 返回指定用户当前的会话，不存在返回 nil。
@@ -288,6 +294,7 @@ func (s *SessionStore) Start(userID int64, availableOAuthProviders map[string]bo
 	}
 	sess := &Session{Step: StepEmail, availableOAuthProviders: availableOAuthProviders, Draft: Draft{Protocol: protocol}}
 	s.m[userID] = sess
+	s.persistLocked(userID, sess)
 	return sess
 }
 
@@ -296,4 +303,69 @@ func (s *SessionStore) Clear(userID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.m, userID)
+	if s.db != nil {
+		if err := db.DeleteSession(s.db, userID, "addaccount"); err != nil {
+			slog.Warn("telegram: delete addaccount session", "user_id", userID, "error", err)
+		}
+	}
+}
+
+// Persist 在每次 Advance 推进状态后调用，将当前会话持久化到数据库。
+func (s *SessionStore) Persist(userID int64) {
+	s.mu.Lock()
+	sess := s.m[userID]
+	s.mu.Unlock()
+	if sess != nil {
+		s.persistLocked(userID, sess)
+	}
+}
+
+// persistLocked 在持有锁的情况下持久化会话到数据库。调用方必须持有 s.mu。
+func (s *SessionStore) persistLocked(userID int64, sess *Session) {
+	if s.db == nil {
+		return
+	}
+	draftJSON, err := json.Marshal(sess.Draft)
+	if err != nil {
+		slog.Warn("telegram: marshal addaccount session", "user_id", userID, "error", err)
+		return
+	}
+	if err := db.UpsertSession(s.db, &db.StoredSession{
+		UserID:      userID,
+		SessionType: "addaccount",
+		Step:        int(sess.Step),
+		DraftJSON:   string(draftJSON),
+	}); err != nil {
+		slog.Warn("telegram: persist addaccount session", "user_id", userID, "error", err)
+	}
+}
+
+// RestoreAll 从数据库恢复所有持久化的 /addaccount 会话。availableOAuthProviders
+// 和启动时的 oauthConfigs 一致，用于重新填充会话的 provider 白名单。
+func (s *SessionStore) RestoreAll(availableOAuthProviders map[string]bool) {
+	if s.db == nil {
+		return
+	}
+	stored, err := db.ListAllSessions(s.db)
+	if err != nil {
+		slog.Warn("telegram: list persisted sessions", "error", err)
+		return
+	}
+	for _, ss := range stored {
+		if ss.SessionType != "addaccount" {
+			continue
+		}
+		var draft Draft
+		if err := json.Unmarshal([]byte(ss.DraftJSON), &draft); err != nil {
+			slog.Warn("telegram: unmarshal addaccount session", "user_id", ss.UserID, "error", err)
+			continue
+		}
+		s.mu.Lock()
+		s.m[ss.UserID] = &Session{
+			Step:                    Step(ss.Step),
+			Draft:                   draft,
+			availableOAuthProviders: availableOAuthProviders,
+		}
+		s.mu.Unlock()
+	}
 }

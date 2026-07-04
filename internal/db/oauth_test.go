@@ -16,7 +16,7 @@ func TestUpdateOAuthTokensWithNewRefreshToken(t *testing.T) {
 		IMAPHost:          "imap.gmail.com",
 		IMAPPort:          993,
 		IMAPUsername:      "user@gmail.com",
-		AuthType:          "oauth",
+		AuthType:          AuthTypeOAuth,
 		OAuthProvider:     "gmail",
 		OAuthRefreshToken: "encrypted-refresh-1",
 		OAuthAccessToken:  "encrypted-access-1",
@@ -30,7 +30,7 @@ func TestUpdateOAuthTokensWithNewRefreshToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAccountByID returned error: %v", err)
 	}
-	if account.AuthType != "oauth" || account.OAuthProvider != "gmail" {
+	if account.AuthType != AuthTypeOAuth || account.OAuthProvider != "gmail" {
 		t.Fatalf("unexpected auth fields: %+v", account)
 	}
 	if !account.OAuthTokenExpiry.Equal(expiry) {
@@ -67,7 +67,7 @@ func TestUpdateOAuthTokensKeepsRefreshTokenWhenEmpty(t *testing.T) {
 		IMAPHost:          "outlook.office365.com",
 		IMAPPort:          993,
 		IMAPUsername:      "user@outlook.com",
-		AuthType:          "oauth",
+		AuthType:          AuthTypeOAuth,
 		OAuthProvider:     "outlook",
 		OAuthRefreshToken: "encrypted-refresh-original",
 		OAuthAccessToken:  "encrypted-access-original",

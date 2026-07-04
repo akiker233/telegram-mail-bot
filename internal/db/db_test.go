@@ -49,7 +49,7 @@ func TestInsertAndListAccounts(t *testing.T) {
 	if !accounts[0].Enabled {
 		t.Error("expected account to be enabled by default")
 	}
-	if accounts[0].AuthType != "password" {
+	if accounts[0].AuthType != AuthTypePassword {
 		t.Errorf("expected default AuthType=password, got %q", accounts[0].AuthType)
 	}
 	if accounts[0].Protocol != "imap" {

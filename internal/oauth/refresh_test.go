@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -63,7 +65,7 @@ func TestRefreshIfNeededTreatsNearExpiryAsExpired(t *testing.T) {
 		IMAPHost:          "imap.b.com",
 		IMAPPort:          993,
 		IMAPUsername:      "a@b.com",
-		AuthType:          "oauth",
+		AuthType:          db.AuthTypeOAuth,
 		OAuthRefreshToken: encryptedRefresh,
 		// 在 expiryMargin (2分钟) 之内，应被当作已过期处理。
 		OAuthTokenExpiry: time.Now().Add(30 * time.Second),
@@ -121,7 +123,7 @@ func TestRefreshIfNeededPersistsRotatedRefreshToken(t *testing.T) {
 		IMAPHost:          "imap.b.com",
 		IMAPPort:          993,
 		IMAPUsername:      "a@b.com",
-		AuthType:          "oauth",
+		AuthType:          db.AuthTypeOAuth,
 		OAuthRefreshToken: encryptedRefresh,
 		OAuthTokenExpiry:  time.Now().Add(-time.Minute), // 已过期
 	})
@@ -149,6 +151,26 @@ func TestRefreshIfNeededPersistsRotatedRefreshToken(t *testing.T) {
 	}
 	if decryptedRefresh != "rotated-refresh-token" {
 		t.Errorf("expected rotated refresh token to be persisted, got %q", decryptedRefresh)
+	}
+}
+
+func TestIsPermanentDetectsInvalidGrant(t *testing.T) {
+	err := &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
+	if !IsPermanent(err) {
+		t.Error("expected invalid_grant to be treated as permanent")
+	}
+}
+
+func TestIsPermanentIgnoresTransientErrors(t *testing.T) {
+	cases := []error{
+		&oauth2.RetrieveError{ErrorCode: "server_error"},
+		fmt.Errorf("token refresh: %w", context.DeadlineExceeded),
+		errors.New("connection reset by peer"),
+	}
+	for _, err := range cases {
+		if IsPermanent(err) {
+			t.Errorf("expected %v to not be treated as permanent", err)
+		}
 	}
 }
 

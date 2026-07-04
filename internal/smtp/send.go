@@ -21,6 +21,9 @@ type Config struct {
 	Username string
 	Password string
 	From     string
+	// Auth 为 nil 时使用 Password 做 PLAIN 认证；非 nil 时直接用该 Auth
+	// 实例做认证（用于 XOAUTH2 等非密码方案），忽略 Password 字段。
+	Auth smtp.Auth
 }
 
 // Message 是要发送的邮件内容。
@@ -53,9 +56,15 @@ func Send(cfg Config, msg Message) error {
 		}
 	}
 
-	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-	if err := client.Auth(auth); err != nil {
-		return fmt.Errorf("smtp: auth: %w", err)
+	if cfg.Auth != nil {
+		if err := client.Auth(cfg.Auth); err != nil {
+			return fmt.Errorf("smtp: auth: %w", err)
+		}
+	} else {
+		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("smtp: auth: %w", err)
+		}
 	}
 
 	if err := client.Mail(cfg.From); err != nil {

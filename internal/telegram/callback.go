@@ -2,7 +2,7 @@ package telegram
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -20,7 +20,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) {
 
 	// 消除客户端按钮上的加载动画，失败只记日志，不影响后续处理。
 	if _, err := b.api.Request(tgbotapi.NewCallback(cb.ID, "")); err != nil {
-		log.Printf("telegram: answer callback query failed: %v", err)
+		slog.Warn("telegram: answer callback query failed", "error", err)
 	}
 
 	if cb.Message == nil {
@@ -82,7 +82,7 @@ func (b *Bot) handleDelCallback(chatID int64, messageID int, userID int64, idStr
 	}
 	edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, messageID, text, keyboard)
 	if _, err := b.api.Request(edit); err != nil {
-		log.Printf("telegram: edit message %d in chat %d failed: %v", messageID, chatID, err)
+		slog.Warn("telegram: edit message failed", "message_id", messageID, "chat_id", chatID, "error", err)
 	}
 }
 
@@ -90,7 +90,7 @@ func (b *Bot) handleDelCallback(chatID int64, messageID int, userID int64, idStr
 func (b *Bot) clearKeyboard(chatID int64, messageID int, note string) {
 	edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, messageID, note, tgbotapi.InlineKeyboardMarkup{})
 	if _, err := b.api.Request(edit); err != nil {
-		log.Printf("telegram: edit message %d in chat %d failed: %v", messageID, chatID, err)
+		slog.Warn("telegram: edit message failed", "message_id", messageID, "chat_id", chatID, "error", err)
 	}
 }
 

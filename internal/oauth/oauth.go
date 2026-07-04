@@ -25,8 +25,13 @@ var microsoftEndpoint = oauth2.Endpoint{
 	DeviceAuthURL: "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode",
 }
 
-// gmailScopes 需要完整的 IMAP/SMTP 访问权限。
-var gmailScopes = []string{"https://mail.google.com/"}
+// gmailScopes 需要 Gmail 完整 IMAP/SMTP 访问权限 + email 基础信息。
+// 仅写 https://mail.google.com/ 在 Device Code Flow 中会报 invalid_scope，
+// Google 要求同时携带 openid 或 email 等基础身份 scope 才能通过设备授权。
+var gmailScopes = []string{
+	"https://mail.google.com/",
+	"email",
+}
 
 // outlookScopes 需要 IMAP、SMTP 发信权限，以及 offline_access 才能拿到 refresh_token。
 var outlookScopes = []string{

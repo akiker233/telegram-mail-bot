@@ -3,6 +3,8 @@ package telegram
 import (
 	"testing"
 	"time"
+
+	"telegram-mail-bot/internal/db"
 )
 
 func TestSessionPresetFlowSkipsHostAndPort(t *testing.T) {
@@ -181,7 +183,7 @@ func TestSessionAuthMethodChoosePassword(t *testing.T) {
 	if s.Step != StepPassword {
 		t.Fatalf("expected StepPassword, got %v", s.Step)
 	}
-	if s.Draft.AuthType != "password" {
+	if s.Draft.AuthType != db.AuthTypePassword {
 		t.Errorf("expected AuthType=password, got %q", s.Draft.AuthType)
 	}
 	if s.Draft.Host != "imap.gmail.com" {
@@ -198,7 +200,7 @@ func TestSessionAuthMethodChooseOAuthEntersPendingStep(t *testing.T) {
 	if s.Step != StepOAuthPending {
 		t.Fatalf("expected StepOAuthPending, got %v", s.Step)
 	}
-	if s.Draft.AuthType != "oauth" {
+	if s.Draft.AuthType != db.AuthTypeOAuth {
 		t.Errorf("expected AuthType=oauth, got %q", s.Draft.AuthType)
 	}
 }
@@ -215,7 +217,7 @@ func TestSessionAuthMethodInvalidReplyStaysOnStep(t *testing.T) {
 }
 
 func TestSessionCompleteOAuthAdvancesToConfirm(t *testing.T) {
-	s := &Session{Step: StepOAuthPending, Draft: Draft{Email: "user@gmail.com", AuthType: "oauth", OAuthProvider: "gmail", Host: "imap.gmail.com", Port: 993}}
+	s := &Session{Step: StepOAuthPending, Draft: Draft{Email: "user@gmail.com", AuthType: db.AuthTypeOAuth, OAuthProvider: "gmail", Host: "imap.gmail.com", Port: 993}}
 	reply := s.CompleteOAuth("access-token", "refresh-token", time.Now().Add(time.Hour))
 	if s.Step != StepConfirm {
 		t.Fatalf("expected StepConfirm after CompleteOAuth, got %v", s.Step)
@@ -322,7 +324,7 @@ func TestSessionConfirmUnrecognizedReplyStaysOnStep(t *testing.T) {
 }
 
 func TestSessionStoreStartGetClear(t *testing.T) {
-	store := NewSessionStore()
+	store := NewSessionStore(nil)
 
 	if store.Get(1) != nil {
 		t.Fatal("expected no session before Start")
@@ -343,7 +345,7 @@ func TestSessionStoreStartGetClear(t *testing.T) {
 }
 
 func TestSessionStoreStartDefaultsProtocolToIMAP(t *testing.T) {
-	store := NewSessionStore()
+	store := NewSessionStore(nil)
 	sess := store.Start(1, nil, "")
 	if sess.Draft.Protocol != "imap" {
 		t.Errorf("expected default Protocol=imap, got %q", sess.Draft.Protocol)
@@ -351,7 +353,7 @@ func TestSessionStoreStartDefaultsProtocolToIMAP(t *testing.T) {
 }
 
 func TestSessionStoreStartWithPOP3Protocol(t *testing.T) {
-	store := NewSessionStore()
+	store := NewSessionStore(nil)
 	sess := store.Start(1, nil, "pop3")
 	if sess.Draft.Protocol != "pop3" {
 		t.Errorf("expected Protocol=pop3, got %q", sess.Draft.Protocol)

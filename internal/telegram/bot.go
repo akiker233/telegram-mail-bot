@@ -3,7 +3,7 @@ package telegram
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"golang.org/x/oauth2"
@@ -46,15 +46,15 @@ func New(token string, database *sql.DB, manager AccountStarter, allowedUsers ma
 
 	// 注册命令菜单失败不影响机器人正常工作（只是客户端里少一个自动补全列表），只记日志。
 	if _, err := api.Request(tgbotapi.NewSetMyCommands(botCommands...)); err != nil {
-		log.Printf("telegram: 注册命令菜单失败: %v", err)
+		slog.Warn("telegram: 注册命令菜单失败", "error", err)
 	}
 
 	return &Bot{
 		api:           api,
 		db:            database,
 		manager:       manager,
-		sessions:      NewSessionStore(),
-		sendSessions:  NewSendSessionStore(),
+		sessions:      NewSessionStore(database),
+		sendSessions:  NewSendSessionStore(database),
 		allowedUsers:  allowedUsers,
 		encryptionKey: encryptionKey,
 		oauthConfigs:  oauthConfigs,
@@ -65,6 +65,15 @@ func New(token string, database *sql.DB, manager AccountStarter, allowedUsers ma
 // parseMode 为 "HTML" 时 text 必须是 Telegram 能安全解析的 HTML 子集，为空字符串则按纯文本发送。
 func (b *Bot) Send(telegramUserID int64, text string, parseMode string) {
 	b.replyWithParseMode(telegramUserID, text, parseMode)
+}
+
+// RestoreSessions 从数据库恢复进程重启前的未完成会话。
+func (b *Bot) RestoreSessions() {
+	availableProviders := make(map[string]bool, len(b.oauthConfigs))
+	for provider := range b.oauthConfigs {
+		availableProviders[provider] = true
+	}
+	b.sessions.RestoreAll(availableProviders)
 }
 
 // Run 启动长轮询循环，直到 ctx 被取消。
@@ -98,6 +107,6 @@ func (b *Bot) replyWithKeyboard(chatID int64, text string, keyboard tgbotapi.Inl
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyMarkup = keyboard
 	if _, err := b.api.Send(msg); err != nil {
-		log.Printf("telegram: send message with keyboard to chat %d failed: %v", chatID, err)
+		slog.Warn("telegram: send message with keyboard failed", "chat_id", chatID, "error", err)
 	}
 }

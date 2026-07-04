@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// 认证方式常量。
+const (
+	AuthTypePassword = "password"
+	AuthTypeOAuth    = "oauth"
+)
+
 // Account 表示一个已配置的邮箱账号。
 type Account struct {
 	ID                int64
@@ -34,7 +40,7 @@ const accountColumnsSQL = `id, telegram_user_id, label, email, imap_host, imap_p
 func InsertAccount(db *sql.DB, a *Account) (int64, error) {
 	authType := a.AuthType
 	if authType == "" {
-		authType = "password"
+		authType = AuthTypePassword
 	}
 	protocol := a.Protocol
 	if protocol == "" {
@@ -116,6 +122,15 @@ func GetAccountByID(db *sql.DB, id int64) (*Account, error) {
 // DeleteAccount 删除账号（级联删除关联的 mail_state 记录）。
 func DeleteAccount(db *sql.DB, id int64) error {
 	_, err := db.Exec(`DELETE FROM accounts WHERE id = ?`, id)
+	return err
+}
+
+// UpdateAccountOAuthTokens 更新 OAuth 账号的 token 相关字段，用于重新授权时在线换新 token。
+func UpdateAccountOAuthTokens(db *sql.DB, a *Account) error {
+	_, err := db.Exec(
+		`UPDATE accounts SET oauth_access_token = ?, oauth_refresh_token = ?, oauth_token_expiry = ? WHERE id = ?`,
+		a.OAuthAccessToken, a.OAuthRefreshToken, a.OAuthTokenExpiry.UTC().Format(time.RFC3339), a.ID,
+	)
 	return err
 }
 

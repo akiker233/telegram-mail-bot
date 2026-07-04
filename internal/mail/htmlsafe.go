@@ -1,10 +1,20 @@
 package mail
 
 import (
+	"regexp"
 	"strings"
 
 	"golang.org/x/net/html"
 )
+
+// blankLinesRe 把连续 3 个以上的换行压缩成 2 个（最多保留一个空行）。
+// 邮件模板里常见的空 <div>/<p> 占位符会导致 structuralTags 堆叠出大量连续换行，
+// 在 Telegram 里表现为一大段空白区域。先用 normalizeWS 抹掉换行之间的空白字符，
+// 否则 `\n  \t\n  \n` 不会被 \n{3,} 捕获。
+var blankLinesRe = regexp.MustCompile(`\n{3,}`)
+
+// normalizeWS 把换行之间的空白字符（空格、制表符等）清除，使 \n{3,} 能准确匹配。
+var normalizeWS = regexp.MustCompile(`[\t ]*\n[\t ]*`)
 
 // inlineTags 把邮件里常见的富文本标签映射为 Telegram parse_mode=HTML 支持的标签。
 var inlineTags = map[string]string{
@@ -45,7 +55,11 @@ func htmlToTelegramHTML(rawHTML string, maxVisibleRunes int) (result string, ok 
 	r := &htmlRenderer{remaining: maxVisibleRunes}
 	r.renderChildren(root)
 
-	out := strings.TrimSpace(r.sb.String())
+	// 先规范化换行之间的空白字符，再压缩连续空行。两步处理保证像
+	// `\n  \t\n\n  \n` 这样的混合空白也能被正确压缩为一个空行。
+	raw := r.sb.String()
+	raw = normalizeWS.ReplaceAllString(raw, "\n")
+	out := strings.TrimSpace(blankLinesRe.ReplaceAllString(raw, "\n\n"))
 	if r.truncated {
 		out += "..."
 	}
