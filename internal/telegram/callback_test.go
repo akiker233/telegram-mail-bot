@@ -15,6 +15,7 @@ type fakeAccountStarter struct{}
 
 func (fakeAccountStarter) Start(ctx context.Context, account *db.Account) error { return nil }
 func (fakeAccountStarter) Stop(accountID int64)                                {}
+func (fakeAccountStarter) IsRunning(accountID int64) bool                      { return true }
 
 func newTestBot(t *testing.T) *Bot {
 	t.Helper()
@@ -107,6 +108,63 @@ func TestDeleteAccountRemovesOwnAccount(t *testing.T) {
 
 	if _, err := db.GetAccountByID(b.db, id); err == nil {
 		t.Fatal("expected account to be deleted")
+	}
+}
+
+func TestRenderAccountStatusEmpty(t *testing.T) {
+	b := newTestBot(t)
+	text, err := b.renderAccountStatus(111)
+	if err != nil {
+		t.Fatalf("renderAccountStatus returned error: %v", err)
+	}
+	if !strings.Contains(text, "还没有添加任何账号") {
+		t.Fatalf("unexpected text: %q", text)
+	}
+}
+
+func TestRenderAccountStatusShowsProgress(t *testing.T) {
+	b := newTestBot(t)
+
+	imapID, err := db.InsertAccount(b.db, &db.Account{
+		TelegramUserID: 111,
+		Email:          "user@gmail.com",
+		IMAPHost:       "imap.gmail.com",
+		IMAPPort:       993,
+		Protocol:       "imap",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount returned error: %v", err)
+	}
+	if err := db.SaveMailState(b.db, &db.MailState{AccountID: imapID, Folder: "INBOX", LastUID: 42}); err != nil {
+		t.Fatalf("SaveMailState returned error: %v", err)
+	}
+
+	pop3ID, err := db.InsertAccount(b.db, &db.Account{
+		TelegramUserID: 111,
+		Email:          "user@163.com",
+		IMAPHost:       "pop.163.com",
+		IMAPPort:       995,
+		Protocol:       "pop3",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount returned error: %v", err)
+	}
+	if err := db.MarkSeenUID(b.db, pop3ID, "uid-1"); err != nil {
+		t.Fatalf("MarkSeenUID returned error: %v", err)
+	}
+
+	text, err := b.renderAccountStatus(111)
+	if err != nil {
+		t.Fatalf("renderAccountStatus returned error: %v", err)
+	}
+	if !strings.Contains(text, "user@gmail.com") || !strings.Contains(text, "LastUID 42") {
+		t.Fatalf("expected IMAP account with LastUID 42 in text, got %q", text)
+	}
+	if !strings.Contains(text, "user@163.com") || !strings.Contains(text, "已处理 1 封") {
+		t.Fatalf("expected POP3 account with processed count in text, got %q", text)
+	}
+	if !strings.Contains(text, "🟢 运行中") {
+		t.Fatalf("expected running status from fakeAccountStarter, got %q", text)
 	}
 }
 

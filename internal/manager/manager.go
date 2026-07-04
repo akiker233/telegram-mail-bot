@@ -156,6 +156,14 @@ func (m *Manager) Stop(accountID int64) {
 	}
 }
 
+// IsRunning 返回该账号当前是否有正在运行的监听 goroutine。
+func (m *Manager) IsRunning(accountID int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.cancels[accountID]
+	return ok
+}
+
 func formatSummary(label string, s *mail.Summary) string {
 	return fmt.Sprintf("📬 %s\n发件人: %s\n主题: %s\n\n%s", label, s.From, s.Subject, s.Body)
 }

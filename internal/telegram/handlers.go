@@ -28,12 +28,14 @@ const helpText = `👋 我可以把邮箱新邮件转发到 Telegram，也能用
 📋 /listaccounts - 列出已添加的账号
 🗑️ /delaccount <id> - 删除一个账号
 📤 /send - 用已添加的账号发一封邮件
+📊 /status - 查看账号状态
 🚫 /cancel - 取消当前正在进行的操作`
 
 // AccountStarter 抽象了账号添加成功后启动监听的动作，避免 telegram 包依赖 manager 包。
 type AccountStarter interface {
 	Start(ctx context.Context, account *db.Account) error
 	Stop(accountID int64)
+	IsRunning(accountID int64) bool
 }
 
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
@@ -98,6 +100,8 @@ func (b *Bot) handleCommand(chatID, userID int64, command, args string) {
 		b.handleListAccounts(chatID, userID)
 	case "delaccount":
 		b.handleDelAccount(chatID, userID, args)
+	case "status":
+		b.handleAccountStatus(chatID, userID)
 	default:
 		b.reply(chatID, helpText)
 	}
@@ -306,6 +310,65 @@ func (b *Bot) renderAccountsList(userID int64) (string, tgbotapi.InlineKeyboardM
 	return sb.String(), tgbotapi.NewInlineKeyboardMarkup(rows...), nil
 }
 
+// handleAccountStatus 展示每个账号的基础信息和同步进度（IMAP 用 LastUID，POP3 用已处理邮件数）。
+func (b *Bot) handleAccountStatus(chatID, userID int64) {
+	text, err := b.renderAccountStatus(userID)
+	if err != nil {
+		b.reply(chatID, "❌ 查询账号失败: "+err.Error())
+		return
+	}
+	b.reply(chatID, text)
+}
+
+// renderAccountStatus 渲染 handleAccountStatus 的文本内容，供命令处理和单测共用。
+func (b *Bot) renderAccountStatus(userID int64) (string, error) {
+	accounts, err := db.ListAccountsByUser(b.db, userID)
+	if err != nil {
+		return "", err
+	}
+	if len(accounts) == 0 {
+		return "还没有添加任何账号，使用 /addaccount 添加", nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("账号状态：\n")
+	for _, a := range accounts {
+		enabled := "✅ 启用"
+		if !a.Enabled {
+			enabled = "⛔ 已停用"
+		}
+		running := "🔴 未运行"
+		if b.manager.IsRunning(a.ID) {
+			running = "🟢 运行中"
+		}
+		authType := "密码"
+		if a.AuthType == "oauth" {
+			authType = "OAuth"
+		}
+
+		var progress string
+		if a.Protocol == "pop3" {
+			count, err := db.CountSeenUIDs(b.db, a.ID)
+			if err != nil {
+				progress = "查询失败"
+			} else {
+				progress = fmt.Sprintf("已处理 %d 封", count)
+			}
+		} else {
+			state, err := db.GetMailState(b.db, a.ID, "INBOX")
+			if err != nil {
+				progress = "查询失败"
+			} else {
+				progress = fmt.Sprintf("LastUID %d", state.LastUID)
+			}
+		}
+
+		fmt.Fprintf(&sb, "\n#%d %s\n协议: %s | 认证: %s | %s | %s\n同步进度: %s\n",
+			a.ID, a.Email, strings.ToUpper(a.Protocol), authType, enabled, running, progress)
+	}
+	return sb.String(), nil
+}
+
 func (b *Bot) handleSendStart(chatID, userID int64) {
 	accounts, err := db.ListAccountsByUser(b.db, userID)
 	if err != nil {
@@ -396,9 +459,14 @@ func (b *Bot) sendMail(userID int64, draft SendDraft) error {
 
 func (b *Bot) handleDelAccount(chatID, userID int64, args string) {
 	args = strings.TrimSpace(args)
+	if args == "" {
+		b.handleListAccounts(chatID, userID)
+		return
+	}
+
 	id, err := strconv.ParseInt(args, 10, 64)
 	if err != nil {
-		b.reply(chatID, "用法: /delaccount <id>，id 可以用 /listaccounts 查看")
+		b.reply(chatID, "用法: /delaccount 或 /delaccount <id>，id 可以用 /listaccounts 查看")
 		return
 	}
 

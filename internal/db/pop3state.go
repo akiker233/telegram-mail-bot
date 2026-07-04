@@ -28,6 +28,13 @@ func MarkSeenUID(db *sql.DB, accountID int64, uidl string) error {
 	return err
 }
 
+// CountSeenUIDs 统计某账号已处理过的 UIDL 数量，用于展示 POP3 账号的同步进度。
+func CountSeenUIDs(db *sql.DB, accountID int64) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(1) FROM pop3_seen_uids WHERE account_id = ?`, accountID).Scan(&count)
+	return count, err
+}
+
 // PruneSeenUIDs 删除某账号早于 olderThan 的已见 UIDL 记录，避免该表无限增长。
 func PruneSeenUIDs(db *sql.DB, accountID int64, olderThan time.Time) error {
 	_, err := db.Exec(

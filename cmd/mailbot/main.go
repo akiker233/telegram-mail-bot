@@ -5,7 +5,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+
+	"golang.org/x/oauth2"
 
 	"telegram-mail-bot/internal/config"
 	"telegram-mail-bot/internal/crypto"
@@ -14,6 +17,9 @@ import (
 	"telegram-mail-bot/internal/telegram"
 	"telegram-mail-bot/internal/update"
 )
+
+// repoURL 是项目仓库地址，仅用于启动日志展示。
+const repoURL = "https://github.com/akiker233/telegram-mail-bot"
 
 // version 由发布流程通过 -ldflags "-X main.version=..." 注入，本地开发编译时为空字符串。
 var version string
@@ -59,6 +65,9 @@ func main() {
 		bot.Send(telegramUserID, text, parseMode)
 	}
 	oauthConfigs := cfg.OAuthConfigs()
+
+	logStartupInfo(cfg.DBPath, oauthConfigs)
+
 	mgr := manager.New(database, encryptionKey, send, oauthConfigs)
 
 	bot, err = telegram.New(cfg.TelegramBotToken, database, mgr, cfg.AllowedUsers, encryptionKey, oauthConfigs)
@@ -73,4 +82,25 @@ func main() {
 	log.Println("机器人已启动")
 	bot.Run(ctx)
 	log.Println("机器人已退出")
+}
+
+// logStartupInfo 打印启动时的关键信息，方便排查部署问题。
+func logStartupInfo(dbPath string, oauthConfigs map[string]oauth2.Config) {
+	log.Printf("仓库地址: %s", repoURL)
+	if version == "" {
+		log.Println("版本: 开发版本")
+	} else {
+		log.Printf("版本: %s", version)
+	}
+	log.Printf("数据库路径: %s", dbPath)
+
+	if len(oauthConfigs) == 0 {
+		log.Println("OAuth: 未配置")
+		return
+	}
+	providers := make([]string, 0, len(oauthConfigs))
+	for provider := range oauthConfigs {
+		providers = append(providers, provider)
+	}
+	log.Printf("OAuth: 已加载 %s", strings.Join(providers, ", "))
 }

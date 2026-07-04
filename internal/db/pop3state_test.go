@@ -120,6 +120,45 @@ func TestPruneSeenUIDsRemovesOnlyOldRecords(t *testing.T) {
 	}
 }
 
+func TestCountSeenUIDs(t *testing.T) {
+	database := openTestDB(t)
+
+	id1, err := InsertAccount(database, &Account{TelegramUserID: 1, Label: "a1", Email: "a1@b.com", IMAPHost: "imap.b.com", IMAPPort: 993, IMAPUsername: "a1@b.com"})
+	if err != nil {
+		t.Fatalf("InsertAccount returned error: %v", err)
+	}
+	id2, err := InsertAccount(database, &Account{TelegramUserID: 1, Label: "a2", Email: "a2@b.com", IMAPHost: "imap.b.com", IMAPPort: 993, IMAPUsername: "a2@b.com"})
+	if err != nil {
+		t.Fatalf("InsertAccount returned error: %v", err)
+	}
+
+	if err := MarkSeenUID(database, id1, "uid-1"); err != nil {
+		t.Fatalf("MarkSeenUID returned error: %v", err)
+	}
+	if err := MarkSeenUID(database, id1, "uid-2"); err != nil {
+		t.Fatalf("MarkSeenUID returned error: %v", err)
+	}
+	if err := MarkSeenUID(database, id2, "uid-1"); err != nil {
+		t.Fatalf("MarkSeenUID returned error: %v", err)
+	}
+
+	count1, err := CountSeenUIDs(database, id1)
+	if err != nil {
+		t.Fatalf("CountSeenUIDs returned error: %v", err)
+	}
+	if count1 != 2 {
+		t.Fatalf("expected 2 seen uids for account 1, got %d", count1)
+	}
+
+	count2, err := CountSeenUIDs(database, id2)
+	if err != nil {
+		t.Fatalf("CountSeenUIDs returned error: %v", err)
+	}
+	if count2 != 1 {
+		t.Fatalf("expected 1 seen uid for account 2, got %d", count2)
+	}
+}
+
 func TestPruneSeenUIDsOnlyAffectsGivenAccount(t *testing.T) {
 	database := openTestDB(t)
 

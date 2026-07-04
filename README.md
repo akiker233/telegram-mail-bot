@@ -88,7 +88,9 @@ GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -o mailbot     ./cmd/mailbot   
 | `/addaccount` | 添加一个邮箱账号，不带参数时先弹出协议选择按钮（IMAP/POP3），机器人会依次询问邮箱、服务器信息、密码/授权码等 |
 | `/addaccount pop3` | 直接用 POP3 协议添加账号，跳过协议选择按钮（无实时推送，定时轮询） |
 | `/listaccounts` | 列出已添加的账号及状态，每个账号带一个删除按钮 |
-| `/delaccount <id>` | 删除一个账号（id 从 `/listaccounts` 获取） |
+| `/delaccount` | 列出已添加的账号，每个账号带一个删除按钮，点击即可删除 |
+| `/delaccount <id>` | 直接删除指定 id 的账号（id 从 `/listaccounts` 或 `/delaccount` 获取） |
+| `/status` | 查看每个账号的基础信息（协议、认证方式、启用状态、监听是否运行中）和同步进度 |
 | `/send` | 用已配置发信（SMTP）的账号发一封邮件，账号、确认等步骤用按钮操作 |
 | `/cancel` | 取消当前正在进行的多轮问答 |
 
