@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -468,6 +470,7 @@ func (b *Bot) handleVersion(chatID int64) {
 }
 
 // handleUpdate 检查 GitHub Releases 是否有新版本，如果有则下载并尝试替换当前二进制。
+// 更新成功后自动重启程序。
 func (b *Bot) handleUpdate(chatID int64) {
 	if b.version == "" {
 		b.reply(chatID, "❌ 当前是开发版本，不支持自动更新。请手动从 Release 页面下载。\nhttps://github.com/akiker233/telegram-mail-bot/releases")
@@ -495,7 +498,25 @@ func (b *Bot) handleUpdate(chatID int64) {
 			return
 		}
 
-		b.reply(chatID, fmt.Sprintf("✅ 已更新到 %s，请手动重启程序使新版本生效。", newVer))
+		b.reply(chatID, fmt.Sprintf("✅ 已更新到 %s，正在重启...", newVer))
+
+		// 自动重启：用新二进制启动一个子进程，然后退出当前进程。
+		exe, err := os.Executable()
+		if err != nil {
+			b.reply(chatID, "⚠️ 重启失败，请手动重启程序。")
+			return
+		}
+
+		cmd := exec.Command(exe, os.Args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Env = os.Environ()
+		if err := cmd.Start(); err != nil {
+			b.reply(chatID, "⚠️ 重启失败，请手动重启程序。")
+			return
+		}
+
+		os.Exit(0)
 	}()
 }
 
