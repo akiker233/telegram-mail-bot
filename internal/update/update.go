@@ -41,6 +41,27 @@ var (
 	applyBinary        = applyBinaryReal
 )
 
+// CheckVersion 查询 GitHub 最新版本。如果比 currentVersion 新则返回新版本号，
+// 一样新则返回空字符串，出错时返回 error。
+func CheckVersion(currentVersion string) (string, error) {
+	if currentVersion == "" {
+		return "", fmt.Errorf("当前是开发版本")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	release, err := fetchLatestRelease(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if semver.Compare(release.TagName, currentVersion) <= 0 {
+		return "", nil
+	}
+	return release.TagName, nil
+}
+
 // Run 是 `./mailbot update` 的主流程：检查 GitHub 上的最新版本，如果比当前版本新，
 // 下载对应平台的压缩包、校验 SHA256、解压取出二进制并替换掉当前正在运行的程序。
 func Run(currentVersion string) error {

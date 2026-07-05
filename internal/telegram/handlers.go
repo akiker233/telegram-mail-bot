@@ -15,6 +15,7 @@ import (
 	"telegram-mail-bot/internal/db"
 	"telegram-mail-bot/internal/oauth"
 	"telegram-mail-bot/internal/smtp"
+	"telegram-mail-bot/internal/update"
 )
 
 // htmlTagRe 用于 HTML 发送失败时的降级：剥除所有标签得到纯文本重发一次。
@@ -30,6 +31,8 @@ const helpText = `👋 我可以把邮箱新邮件转发到 Telegram，也能用
 📤 /send - 用已添加的账号发一封邮件
 📊 /status - 查看账号状态
 🔑 /reauthorize <id> - 重新授权 OAuth 账号（授权失效时使用）
+ℹ️ /version - 查看版本信息与更新
+🔄 /update - 检查并更新到最新版本
 🚫 /cancel - 取消当前正在进行的操作`
 
 // AccountStarter 抽象了账号添加成功后启动监听的动作，避免 telegram 包依赖 manager 包。
@@ -105,6 +108,10 @@ func (b *Bot) handleCommand(chatID, userID int64, command, args string) {
 		b.handleAccountStatus(chatID, userID)
 	case "reauthorize":
 		b.handleReauthorize(chatID, userID, args)
+	case "version":
+		b.handleVersion(chatID)
+	case "update":
+		b.handleUpdate(chatID)
 	default:
 		b.reply(chatID, helpText)
 	}
@@ -448,6 +455,48 @@ func (b *Bot) renderAccountStatus(userID int64) (string, error) {
 			a.ID, a.Email, strings.ToUpper(a.Protocol), authType, enabled, running, progress)
 	}
 	return sb.String(), nil
+}
+
+// handleVersion 展示当前版本信息与仓库地址。
+func (b *Bot) handleVersion(chatID int64) {
+	ver := b.version
+	if ver == "" {
+		ver = "开发版本"
+	}
+	text := fmt.Sprintf("📦 telegram-mail-bot\n版本: %s\n仓库: https://github.com/akiker233/telegram-mail-bot\n\n使用 /update 检查是否有新版本可更新", ver)
+	b.reply(chatID, text)
+}
+
+// handleUpdate 检查 GitHub Releases 是否有新版本，如果有则下载并尝试替换当前二进制。
+func (b *Bot) handleUpdate(chatID int64) {
+	if b.version == "" {
+		b.reply(chatID, "❌ 当前是开发版本，不支持自动更新。请手动从 Release 页面下载。\nhttps://github.com/akiker233/telegram-mail-bot/releases")
+		return
+	}
+
+	b.reply(chatID, "🔍 正在检查更新...")
+
+	go func() {
+		newVer, err := update.CheckVersion(b.version)
+		if err != nil {
+			b.reply(chatID, fmt.Sprintf("❌ 检查更新失败: %v", err))
+			return
+		}
+		if newVer == "" {
+			b.reply(chatID, fmt.Sprintf("✅ 已是最新版本（%s）", b.version))
+			return
+		}
+
+		// 发现新版本，执行下载并替换。
+		b.reply(chatID, fmt.Sprintf("⬇️ 发现新版本 %s，正在下载更新...", newVer))
+
+		if err := update.Run(b.version); err != nil {
+			b.reply(chatID, fmt.Sprintf("❌ 更新失败: %v", err))
+			return
+		}
+
+		b.reply(chatID, fmt.Sprintf("✅ 已更新到 %s，请手动重启程序使新版本生效。", newVer))
+	}()
 }
 
 func (b *Bot) handleSendStart(chatID, userID int64) {

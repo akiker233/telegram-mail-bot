@@ -75,7 +75,7 @@ func main() {
 
 	mgr := manager.New(database, encryptionKey, send, oauthConfigs)
 
-	bot, err = telegram.New(cfg.TelegramBotToken, database, mgr, cfg.AllowedUsers, encryptionKey, oauthConfigs)
+	bot, err = telegram.New(cfg.TelegramBotToken, database, mgr, cfg.AllowedUsers, encryptionKey, oauthConfigs, version)
 	if err != nil {
 		slog.Error("初始化 Telegram 机器人失败", "err", err)
 		os.Exit(1)

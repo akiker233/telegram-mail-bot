@@ -20,6 +20,8 @@ var botCommands = []tgbotapi.BotCommand{
 	{Command: "status", Description: "查看账号状态"},
 	{Command: "send", Description: "用已添加的账号发一封邮件"},
 	{Command: "cancel", Description: "取消当前正在进行的操作"},
+	{Command: "version", Description: "查看版本信息"},
+	{Command: "update", Description: "检查并更新到最新版本"},
 }
 
 // Bot 是 Telegram 长轮询机器人，负责命令分发和白名单校验。
@@ -32,13 +34,15 @@ type Bot struct {
 	allowedUsers  map[int64]bool
 	encryptionKey []byte
 	oauthConfigs  map[string]oauth2.Config // provider -> config，未配置 Client ID 的 provider 不在此表中
+	version       string                   // 构建时注入的版本号，空字符串表示开发版本
 	ctx           context.Context
 }
 
 // New 创建一个 Bot。encryptionKey 用于加密新添加账号的密码。
 // oauthConfigs 按 provider（"gmail"/"outlook"）索引，用于在 /addaccount 中提供 OAuth 登录选项；
 // 未配置对应 provider 的 Client ID 时传空 map 即可，该 provider 不会出现在问答流程里。
-func New(token string, database *sql.DB, manager AccountStarter, allowedUsers map[int64]bool, encryptionKey []byte, oauthConfigs map[string]oauth2.Config) (*Bot, error) {
+// version 是构建时通过 ldflags 注入的版本号，空字符串表示开发版本。
+func New(token string, database *sql.DB, manager AccountStarter, allowedUsers map[int64]bool, encryptionKey []byte, oauthConfigs map[string]oauth2.Config, version string) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
@@ -58,6 +62,7 @@ func New(token string, database *sql.DB, manager AccountStarter, allowedUsers ma
 		allowedUsers:  allowedUsers,
 		encryptionKey: encryptionKey,
 		oauthConfigs:  oauthConfigs,
+		version:       version,
 	}, nil
 }
 
