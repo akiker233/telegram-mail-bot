@@ -33,7 +33,10 @@ type Manager struct {
 	cancels      map[int64]context.CancelFunc
 }
 
-// New 创建一个 Manager。key 是通过 crypto.DeriveKey 派生的加密密钥。
+// New 创建一个 Manager。
+// database 是 SQLite 数据库连接。
+// key 是通过 crypto.DeriveKey 派生的加密密钥。
+// send 用于向 Telegram 用户发送文本消息。
 // oauthConfigs 按 provider（"gmail"/"outlook"）索引，用于 OAuth 账号刷新 token；
 // 未配置对应 provider 的 Client ID 时传空 map 即可，OAuth 账号会在启动时报认证错误。
 // httpClient 是全局代理客户端，用于 OAuth token 刷新；未配置代理时可传 nil。
