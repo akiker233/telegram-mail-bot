@@ -155,7 +155,7 @@ func (m *Manager) tokenProvider(ctx context.Context, oauthCfg oauth2.Config, acc
 		}
 		refreshCtx := ctx
 		if m.httpClient != nil {
-			refreshCtx = context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, m.httpClient)
+			refreshCtx = context.WithValue(ctx, oauth2.HTTPClient, m.httpClient)
 		}
 		token, err := oauth.RefreshIfNeeded(refreshCtx, m.db, m.key, oauthCfg, account)
 		if err != nil && oauth.IsPermanent(err) {
