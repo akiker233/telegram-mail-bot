@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -546,23 +544,12 @@ func (b *Bot) handleUpdate(chatID int64) {
 
 		b.reply(chatID, fmt.Sprintf("✅ 已更新到 %s，正在重启...", newVer))
 
-		// 自动重启：用新二进制启动一个子进程，然后退出当前进程。
-		exe, err := os.Executable()
-		if err != nil {
+		// 自动重启：Windows 启动子进程，Linux/macOS 使用 syscall.Exec 替换当前进程。
+		if err := update.Restart(); err != nil {
+			slog.Warn("telegram: 自动重启失败", "error", err)
 			b.reply(chatID, "⚠️ 重启失败，请手动重启程序。")
 			return
 		}
-
-		cmd := exec.Command(exe, os.Args[1:]...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Env = os.Environ()
-		if err := cmd.Start(); err != nil {
-			b.reply(chatID, "⚠️ 重启失败，请手动重启程序。")
-			return
-		}
-
-		os.Exit(0)
 	}()
 }
 
