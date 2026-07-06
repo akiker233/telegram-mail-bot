@@ -7,13 +7,43 @@ import (
 )
 
 func TestBuildEndpoint(t *testing.T) {
-	if got := buildEndpoint(""); got != tgbotapi.APIEndpoint {
-		t.Errorf("empty apiURL should use default endpoint, got %q", got)
+	tests := []struct {
+		name   string
+		apiURL string
+		want   string
+	}{
+		{
+			name:   "empty uses default",
+			apiURL: "",
+			want:   tgbotapi.APIEndpoint,
+		},
+		{
+			name:   "custom without trailing slash",
+			apiURL: "https://api.example.com",
+			want:   "https://api.example.com/bot%s/%s",
+		},
+		{
+			name:   "custom with trailing slash",
+			apiURL: "https://api.example.com/",
+			want:   "https://api.example.com/bot%s/%s",
+		},
+		{
+			name:   "custom with path",
+			apiURL: "https://api.example.com/v1/",
+			want:   "https://api.example.com/v1/bot%s/%s",
+		},
+		{
+			name:   "custom with multiple trailing slashes",
+			apiURL: "https://api.example.com//",
+			want:   "https://api.example.com/bot%s/%s",
+		},
 	}
-	if got := buildEndpoint("https://api.example.com"); got != "https://api.example.com/bot%s/%s" {
-		t.Errorf("unexpected endpoint: %q", got)
-	}
-	if got := buildEndpoint("https://api.example.com/"); got != "https://api.example.com/bot%s/%s" {
-		t.Errorf("trailing slash should be trimmed, got %q", got)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildEndpoint(tt.apiURL); got != tt.want {
+				t.Errorf("buildEndpoint(%q) = %q, want %q", tt.apiURL, got, tt.want)
+			}
+		})
 	}
 }

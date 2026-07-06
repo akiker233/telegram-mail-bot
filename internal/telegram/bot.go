@@ -38,7 +38,7 @@ type Bot struct {
 	encryptionKey []byte
 	oauthConfigs  map[string]oauth2.Config // provider -> config，未配置 Client ID 的 provider 不在此表中
 	version       string                   // 构建时注入的版本号，空字符串表示开发版本
-	httpClient    *http.Client             // 全局代理客户端，用于 /update
+	httpClient    *http.Client             // 全局代理客户端，供 handlers.go 中的 /update 命令使用（在后续任务中接入）
 	ctx           context.Context
 }
 
