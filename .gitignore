@@ -2,3 +2,4 @@
 *.db
 /mailbot
 /mailbot.exe
+.worktrees/
