@@ -41,10 +41,23 @@ func TestLoadSuccess(t *testing.T) {
 	t.Setenv("MASTER_KEY", "key")
 	t.Setenv("ALLOWED_TELEGRAM_USERS", "111, 222,333")
 	t.Setenv("DB_PATH", "")
+	t.Setenv("TELEGRAM_API_URL", "https://api.example.com")
+	t.Setenv("TELEGRAM_PROXY", "socks5://127.0.0.1:1080")
+	t.Setenv("GLOBAL_PROXY", "http://user:pass@proxy:8080")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.TelegramAPIURL != "https://api.example.com" {
+		t.Errorf("expected TelegramAPIURL https://api.example.com, got %q", cfg.TelegramAPIURL)
+	}
+	if cfg.TelegramProxy != "socks5://127.0.0.1:1080" {
+		t.Errorf("expected TelegramProxy socks5://127.0.0.1:1080, got %q", cfg.TelegramProxy)
+	}
+	if cfg.GlobalProxy != "http://user:pass@proxy:8080" {
+		t.Errorf("expected GlobalProxy http://user:pass@proxy:8080, got %q", cfg.GlobalProxy)
 	}
 
 	if cfg.DBPath != "./mailbot.db" {
