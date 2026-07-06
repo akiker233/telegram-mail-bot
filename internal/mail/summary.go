@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/emersion/go-message/mail"
+	"golang.org/x/net/html"
 
 	// 注册字符集解码器（GBK/GB2312 等国内邮箱常用编码），仅需导入即生效。
 	_ "github.com/emersion/go-message/charset"
@@ -71,17 +72,26 @@ func BuildSummary(raw io.Reader) (*Summary, error) {
 		}
 	}
 
-	if plainBody != "" {
-		summary.Body = truncate(strings.TrimSpace(plainBody), summaryMaxRunes)
-		return summary, nil
-	}
-
 	if htmlBody != "" {
 		if rendered, ok := htmlToTelegramHTML(htmlBody, summaryMaxRunes); ok {
 			summary.Body = rendered
 			summary.BodyIsHTML = true
 			return summary, nil
 		}
+	}
+
+	if plainBody != "" {
+		truncated := truncate(strings.TrimSpace(plainBody), summaryMaxRunes)
+		if linked, hasURL := autoLinkURLs(truncated); hasURL {
+			summary.Body = linked
+			summary.BodyIsHTML = true
+		} else {
+			summary.Body = truncated
+		}
+		return summary, nil
+	}
+
+	if htmlBody != "" {
 		summary.Body = truncate(strings.TrimSpace(htmlToText(htmlBody)), summaryMaxRunes)
 	}
 
@@ -121,4 +131,22 @@ func truncate(s string, maxRunes int) string {
 		return s
 	}
 	return string(runes[:maxRunes]) + "..."
+}
+
+// urlRe 匹配纯文本中的 http/https URL，用于自动链接化。
+// 终止字符集合：空白、引号、尖括号、以及中文全角标点（避免把中文标点也吞进去）。
+var urlRe = regexp.MustCompile(`https?://[^\s<>"'()\[\]{}，。；：！？、（）【】「」《》]+`)
+
+// autoLinkURLs 把纯文本中的 http/https URL 替换为 <a> 标签，返回 Telegram 安全 HTML。
+// 第二步先做整体 HTML 转义，再用 ReplaceAllStringFunc 精确替换 URL 部分。
+// hasURL=false 表示没有找到 URL，调用方应按纯文本路径发送（节省一次 parse_mode 开销）。
+func autoLinkURLs(text string) (string, bool) {
+	if !urlRe.MatchString(text) {
+		return "", false
+	}
+	escaped := html.EscapeString(text)
+	result := urlRe.ReplaceAllStringFunc(escaped, func(url string) string {
+		return `<a href="` + url + `">` + url + `</a>`
+	})
+	return result, true
 }

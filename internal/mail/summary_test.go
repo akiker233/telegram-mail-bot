@@ -52,7 +52,7 @@ func TestBuildSummaryHTMLOnlyRendersTelegramSafeSubset(t *testing.T) {
 	}
 }
 
-func TestBuildSummaryMultipartPrefersPlainText(t *testing.T) {
+func TestBuildSummaryMultipartPrefersHTML(t *testing.T) {
 	raw := "From: bob@example.com\r\n" +
 		"Subject: Multipart mail\r\n" +
 		"Content-Type: multipart/alternative; boundary=BOUNDARY\r\n" +
@@ -72,8 +72,51 @@ func TestBuildSummaryMultipartPrefersPlainText(t *testing.T) {
 		t.Fatalf("BuildSummary returned error: %v", err)
 	}
 
-	if summary.Body != "Plain version." {
-		t.Errorf("expected plain text part to be preferred, got: %q", summary.Body)
+	if !summary.BodyIsHTML {
+		t.Fatalf("expected BodyIsHTML=true (prefer HTML over plain text), got Body=%q", summary.Body)
+	}
+	if !strings.Contains(summary.Body, "HTML version") {
+		t.Errorf("expected HTML part content to be used, got: %q", summary.Body)
+	}
+}
+
+func TestBuildSummaryPlainTextWithURLAutoLinks(t *testing.T) {
+	raw := "From: alice@example.com\r\n" +
+		"Subject: Link inside\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"\r\n" +
+		"Check this out: https://example.com/path?a=1&b=2 okay?\r\n"
+
+	summary, err := BuildSummary(strings.NewReader(raw))
+	if err != nil {
+		t.Fatalf("BuildSummary returned error: %v", err)
+	}
+
+	if !summary.BodyIsHTML {
+		t.Fatalf("expected BodyIsHTML=true for plain text with URL, got: %q", summary.Body)
+	}
+	if !strings.Contains(summary.Body, `<a href="https://example.com/path?a=1&amp;b=2">https://example.com/path?a=1&amp;b=2</a>`) {
+		t.Errorf("expected URL to be auto-linked and escaped, got: %q", summary.Body)
+	}
+}
+
+func TestAutoLinkURLsNoURLReturnsFalse(t *testing.T) {
+	_, ok := autoLinkURLs("just some text without links")
+	if ok {
+		t.Errorf("expected ok=false for text without URLs")
+	}
+}
+
+func TestAutoLinkURLsStopsAtChinesePunctuation(t *testing.T) {
+	result, ok := autoLinkURLs("点击 https://example.com，了解更多")
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if strings.Contains(result, "，了解更多</a>") {
+		t.Errorf("URL should stop at Chinese comma, got: %q", result)
+	}
+	if !strings.Contains(result, `<a href="https://example.com">https://example.com</a>`) {
+		t.Errorf("expected URL to be linked correctly, got: %q", result)
 	}
 }
 
