@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"net/http"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"golang.org/x/oauth2"
@@ -36,6 +38,7 @@ type Bot struct {
 	encryptionKey []byte
 	oauthConfigs  map[string]oauth2.Config // provider -> config，未配置 Client ID 的 provider 不在此表中
 	version       string                   // 构建时注入的版本号，空字符串表示开发版本
+	httpClient    *http.Client             // 全局代理客户端，用于 /update
 	ctx           context.Context
 }
 
@@ -43,8 +46,32 @@ type Bot struct {
 // oauthConfigs 按 provider（"gmail"/"outlook"）索引，用于在 /addaccount 中提供 OAuth 登录选项；
 // 未配置对应 provider 的 Client ID 时传空 map 即可，该 provider 不会出现在问答流程里。
 // version 是构建时通过 ldflags 注入的版本号，空字符串表示开发版本。
-func New(token string, database *sql.DB, manager AccountStarter, allowedUsers map[int64]bool, encryptionKey []byte, oauthConfigs map[string]oauth2.Config, version string) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(token)
+// apiURL 是自定义 Telegram Bot API 后端地址，空字符串时使用官方默认 endpoint。
+// telegramProxyClient 是用于 Telegram API 请求的 HTTP 客户端，nil 时使用 http.DefaultClient。
+// globalHTTPClient 是全局代理客户端，用于 /update 等需要访问外部网络的操作。
+func New(
+	token string,
+	database *sql.DB,
+	manager AccountStarter,
+	allowedUsers map[int64]bool,
+	encryptionKey []byte,
+	oauthConfigs map[string]oauth2.Config,
+	version string,
+	apiURL string,
+	telegramProxyClient tgbotapi.HTTPClient,
+	globalHTTPClient *http.Client,
+) (*Bot, error) {
+	endpoint := tgbotapi.APIEndpoint
+	if apiURL != "" {
+		endpoint = strings.TrimRight(apiURL, "/") + "/bot%s/%s"
+	}
+
+	client := telegramProxyClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	api, err := tgbotapi.NewBotAPIWithClient(token, endpoint, client)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +91,7 @@ func New(token string, database *sql.DB, manager AccountStarter, allowedUsers ma
 		encryptionKey: encryptionKey,
 		oauthConfigs:  oauthConfigs,
 		version:       version,
+		httpClient:    globalHTTPClient,
 	}, nil
 }
 
