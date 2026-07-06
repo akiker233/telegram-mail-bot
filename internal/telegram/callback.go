@@ -38,6 +38,9 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case "del":
 		b.handleDelCallback(chatID, messageID, userID, value)
 		return
+	case "reauth":
+		b.handleReauthCallback(chatID, messageID, userID, value)
+		return
 	case "addproto":
 		b.clearKeyboard(chatID, messageID, "✅ 已选择协议: "+strings.ToUpper(value))
 		b.startAddAccountSession(chatID, userID, value)
@@ -160,6 +163,16 @@ func keyboardForSendStep(step SendStep) *tgbotapi.InlineKeyboardMarkup {
 		return &kb
 	}
 	return nil
+}
+
+// handleReauthCallback 处理 /reauthorize 列表里的按钮：清除按钮后发起 OAuth device flow。
+func (b *Bot) handleReauthCallback(chatID int64, messageID int, userID int64, idStr string) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return
+	}
+	b.clearKeyboard(chatID, messageID, fmt.Sprintf("🔑 正在为账号 #%d 发起重新授权...", id))
+	b.startReauthorize(chatID, userID, id)
 }
 
 // handleDelCallback 处理列表里的删除按钮：删除账号后直接编辑原消息重新渲染列表。

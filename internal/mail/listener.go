@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strconv"
@@ -173,6 +174,11 @@ func dial(cfg AccountConfig) (*client.Client, error) {
 func authenticate(c *client.Client, cfg AccountConfig) error {
 	if cfg.TokenProvider == nil {
 		if err := c.Login(cfg.Username, cfg.Password); err != nil {
+			if isConnectionClosedErr(err) {
+				// 服务器在响应前断开了连接（网络抖动/服务器限流），不代表密码错误，
+				// 走普通重试路径，而不是判定为永久性认证失败。
+				return err
+			}
 			return &AuthError{Err: err}
 		}
 		return nil
@@ -183,9 +189,18 @@ func authenticate(c *client.Client, cfg AccountConfig) error {
 		return fmt.Errorf("get oauth token: %w", err)
 	}
 	if err := c.Authenticate(newXOAUTH2Client(cfg.Username, token)); err != nil {
+		if isConnectionClosedErr(err) {
+			return err
+		}
 		return &AuthError{Err: err}
 	}
 	return nil
+}
+
+// isConnectionClosedErr 判断错误是否是"服务器在命令响应前关闭了连接"，这类错误与凭证
+// 是否正确无关（可能是网络抖动、服务器限流或临时故障），不应被当作永久性认证失败。
+func isConnectionClosedErr(err error) bool {
+	return strings.Contains(err.Error(), "connection closed") || errors.Is(err, io.EOF)
 }
 
 // applyIDIfNeeded 对 163/126 等要求客户端自报身份的邮箱服务商发送 IMAP ID 命令。

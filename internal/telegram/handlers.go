@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,7 +32,7 @@ const helpText = `👋 我可以把邮箱新邮件转发到 Telegram，也能用
 🗑️ /delaccount <id> - 删除一个账号
 📤 /send - 用已添加的账号发一封邮件
 📊 /status - 查看账号状态
-🔑 /reauthorize <id> - 重新授权 OAuth 账号（授权失效时使用）
+🔑 /reauthorize - 重新授权 OAuth 账号（授权失效时使用，可选择账号）
 ℹ️ /version - 查看版本信息与更新
 🔄 /update - 检查并更新到最新版本
 🚫 /cancel - 取消当前正在进行的操作`
@@ -237,13 +237,59 @@ func (b *Bot) startOAuthFlow(chatID, userID int64, sess *Session) {
 
 // handleReauthorize 重新授权一个已有的 OAuth 账号。
 // 适用场景：OAuth refresh token 过期/被撤销后，用户无需删除账号重新添加。
+// 不带参数时展示该用户所有 OAuth 账号供选择（类似 /delaccount 的按钮列表）。
 func (b *Bot) handleReauthorize(chatID, userID int64, args string) {
-	accountID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
-	if err != nil {
-		b.reply(chatID, "用法: /reauthorize <account_id>")
+	args = strings.TrimSpace(args)
+	if args == "" {
+		text, keyboard, err := b.renderOAuthAccountsList(userID)
+		if err != nil {
+			b.reply(chatID, "❌ 查询账号失败: "+err.Error())
+			return
+		}
+		if len(keyboard.InlineKeyboard) == 0 {
+			b.reply(chatID, text)
+			return
+		}
+		b.replyWithKeyboard(chatID, text, keyboard)
 		return
 	}
 
+	accountID, err := strconv.ParseInt(args, 10, 64)
+	if err != nil {
+		b.reply(chatID, "用法: /reauthorize 或 /reauthorize <account_id>")
+		return
+	}
+	b.startReauthorize(chatID, userID, accountID)
+}
+
+// renderOAuthAccountsList 渲染该用户所有 OAuth 账号列表和每个账号的重新授权按钮，
+// 供 /reauthorize 不带参数时使用，与 renderAccountsList 结构类似。
+func (b *Bot) renderOAuthAccountsList(userID int64) (string, tgbotapi.InlineKeyboardMarkup, error) {
+	accounts, err := db.ListAccountsByUser(b.db, userID)
+	if err != nil {
+		return "", tgbotapi.InlineKeyboardMarkup{}, err
+	}
+
+	var sb strings.Builder
+	sb.WriteString("选择要重新授权的账号：\n")
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, a := range accounts {
+		if a.AuthType != db.AuthTypeOAuth {
+			continue
+		}
+		fmt.Fprintf(&sb, "#%d %s\n", a.ID, a.Email)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🔑 重新授权 #%d", a.ID), fmt.Sprintf("reauth:%d", a.ID)),
+		))
+	}
+	if len(rows) == 0 {
+		return "没有使用 OAuth 认证的账号，无需重新授权", tgbotapi.InlineKeyboardMarkup{}, nil
+	}
+	return sb.String(), tgbotapi.NewInlineKeyboardMarkup(rows...), nil
+}
+
+// startReauthorize 发起指定账号的 OAuth device flow 重新授权，校验账号归属和认证方式后执行。
+func (b *Bot) startReauthorize(chatID, userID, accountID int64) {
 	account, err := db.GetAccountByID(b.db, accountID)
 	if err != nil {
 		b.reply(chatID, "❌ 未找到该账号")

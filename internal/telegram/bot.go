@@ -19,6 +19,7 @@ var botCommands = []tgbotapi.BotCommand{
 	{Command: "delaccount", Description: "删除一个账号"},
 	{Command: "status", Description: "查看账号状态"},
 	{Command: "send", Description: "用已添加的账号发一封邮件"},
+	{Command: "reauthorize", Description: "重新授权 OAuth 账号"},
 	{Command: "cancel", Description: "取消当前正在进行的操作"},
 	{Command: "version", Description: "查看版本信息"},
 	{Command: "update", Description: "检查并更新到最新版本"},

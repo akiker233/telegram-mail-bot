@@ -131,7 +131,7 @@ func (m *Manager) authErrorFunc(account *db.Account) mail.AuthErrorFunc {
 	return func(accountID int64, err error) {
 		slog.Warn("manager: auth error, will retry", "account_id", accountID, "error", err)
 		if account.AuthType == db.AuthTypeOAuth {
-			m.send(telegramUserID, fmt.Sprintf("账号 %s 的 OAuth 授权已失效（%v），请使用 /reauthorize %d 重新授权。系统会每隔 5 分钟自动重试连接。", account.Label, err, accountID), "")
+			m.send(telegramUserID, fmt.Sprintf("账号 %s 的 OAuth 授权已失效（%v），请使用 /reauthorize 重新授权。系统会每隔 5 分钟自动重试连接。", account.Label, err), "")
 		} else {
 			m.send(telegramUserID, fmt.Sprintf("账号 %s 的密码认证失败（%v），请检查密码是否正确。系统会每隔 5 分钟自动重试连接。", account.Label, err), "")
 		}
