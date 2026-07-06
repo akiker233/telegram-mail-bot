@@ -98,7 +98,7 @@ func New(
     oauthConfigs map[string]oauth2.Config,
     version string,
     apiURL string,
-    proxyClient HTTPClient,
+    proxyClient tgbotapi.HTTPClient,
 ) (*Bot, error)
 ```
 
@@ -111,15 +111,47 @@ func New(
 
 ### 4. OAuth 全局代理集成
 
-OAuth 相关函数（`StartDeviceFlow`、`PollToken`、`RefreshIfNeeded`）均通过 `context.Context` 接收配置。调用方在 `internal/telegram/handlers.go` 中注入全局代理客户端：
+OAuth 相关函数（`StartDeviceFlow`、`PollToken`、`RefreshIfNeeded`）均通过 `context.Context` 接收配置。调用方在 context 中注入全局代理客户端：
 
 ```go
 ctx = context.WithValue(ctx, oauth2.HTTPClient, globalClient)
 ```
 
+具体注入位置：
+
+- `internal/telegram/handlers.go` 的 `startOAuthFlow` 和 `startReauthorize` 在调用 `oauth.StartDeviceFlow` / `oauth.PollToken` 前注入。
+- `internal/manager/manager.go` 的 `Manager` 结构体保存全局代理客户端，并在 `tokenProvider` 调用 `oauth.RefreshIfNeeded` 前注入。
+
 无需修改 `internal/oauth` 内部逻辑。
 
-### 5. `/update` 全局代理集成
+### 5. `internal/manager/manager.go`
+
+`Manager` 结构体新增全局代理客户端字段：
+
+```go
+type Manager struct {
+    db           *sql.DB
+    key          []byte
+    send         SendFunc
+    oauthConfigs map[string]oauth2.Config
+    httpClient   *http.Client // 全局代理客户端
+    mu           sync.Mutex
+    cancels      map[int64]context.CancelFunc
+}
+```
+
+`New` 函数增加 `httpClient *http.Client` 参数，保存到结构体中。
+
+`tokenProvider` 在调用 `oauth.RefreshIfNeeded` 前，把 `m.httpClient` 注入 context：
+
+```go
+ctx := context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, m.httpClient)
+token, err := oauth.RefreshIfNeeded(ctx, m.db, m.key, oauthCfg, account)
+```
+
+使用 `context.WithoutCancel(ctx)` 避免父 context 取消导致刷新 token 失败。
+
+### 6. `/update` 全局代理集成
 
 `internal/update/update.go` 当前直接使用 `http.DefaultClient`。将其改为使用传入的 `*http.Client`：
 
@@ -129,16 +161,17 @@ ctx = context.WithValue(ctx, oauth2.HTTPClient, globalClient)
 
 `main.go` 的 `./mailbot update` 分支先构造全局代理客户端再调用 `update.Run`。
 
-### 6. `main.go`
+### 7. `main.go`
 
 启动流程：
 
 1. 调用 `config.Load()` 获取配置。
 2. 用 `cfg.TelegramProxy` 创建 Telegram 代理客户端（若配置）。
 3. 用 `cfg.GlobalProxy` 创建全局代理客户端（若配置）。
-4. 调用 `telegram.New(..., cfg.TelegramAPIURL, telegramClient)`。
-5. OAuth context 注入全局客户端。
-6. `/update` 调用传入全局客户端。
+4. 调用 `manager.New(database, encryptionKey, send, oauthConfigs, globalClient)`。
+5. 调用 `telegram.New(..., cfg.TelegramAPIURL, telegramClient)`。
+6. OAuth context 注入全局客户端。
+7. `/update` 调用传入全局客户端。
 
 ## 数据流
 
@@ -150,6 +183,7 @@ config.Load()
 proxy.NewClient(cfg.TelegramProxy) → telegramClient
 proxy.NewClient(cfg.GlobalProxy)   → globalClient
   ↓
+manager.New(database, encryptionKey, send, oauthConfigs, globalClient)
 telegram.New(token, ..., cfg.TelegramAPIURL, telegramClient)
   ↓
 ctx = context.WithValue(ctx, oauth2.HTTPClient, globalClient)
