@@ -61,10 +61,7 @@ func New(
 	telegramProxyClient tgbotapi.HTTPClient,
 	globalHTTPClient *http.Client,
 ) (*Bot, error) {
-	endpoint := tgbotapi.APIEndpoint
-	if apiURL != "" {
-		endpoint = strings.TrimRight(apiURL, "/") + "/bot%s/%s"
-	}
+	endpoint := buildEndpoint(apiURL)
 
 	client := telegramProxyClient
 	if client == nil {
@@ -93,6 +90,15 @@ func New(
 		version:       version,
 		httpClient:    globalHTTPClient,
 	}, nil
+}
+
+// buildEndpoint 根据自定义 API 地址构造 Telegram Bot API endpoint。
+// 当 apiURL 为空时返回官方默认 endpoint；否则去掉末尾斜杠并追加 /bot%s/%s。
+func buildEndpoint(apiURL string) string {
+	if apiURL == "" {
+		return tgbotapi.APIEndpoint
+	}
+	return strings.TrimRight(apiURL, "/") + "/bot%s/%s"
 }
 
 // Send 向指定 Telegram 用户发送一条消息（私聊场景下 chat ID 与用户 ID 相同）。
