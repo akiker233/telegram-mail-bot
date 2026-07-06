@@ -26,6 +26,9 @@ var setupFields = []envField{
 	{key: "GMAIL_OAUTH_CLIENT_SECRET", prompt: "Gmail OAuth2 Client Secret（留空跳过）", required: false},
 	{key: "OUTLOOK_OAUTH_CLIENT_ID", prompt: "Outlook OAuth2 Client ID（不需要 OAuth 登录可留空跳过）", required: false},
 	{key: "OUTLOOK_OAUTH_CLIENT_SECRET", prompt: "Outlook OAuth2 Client Secret（留空跳过）", required: false},
+	{key: "TELEGRAM_API_URL", prompt: "自定义 Telegram Bot API 基础 URL（不需要可留空）", required: false},
+	{key: "TELEGRAM_PROXY", prompt: "Telegram Bot API 代理地址，支持 http/https/socks5（不需要可留空）", required: false},
+	{key: "GLOBAL_PROXY", prompt: "全局代理地址，用于 OAuth 和更新检查（不需要可留空）", required: false},
 }
 
 // RunInteractiveSetupIfNeeded 在必填环境变量缺失且当前处于交互式终端时，
