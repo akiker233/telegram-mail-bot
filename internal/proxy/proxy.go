@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -19,7 +18,7 @@ func NewClient(proxyURL string) (*http.Client, error) {
 
 	u, err := url.Parse(proxyURL)
 	if err != nil {
-		return nil, fmt.Errorf("proxy: 解析代理地址失败: %w", err)
+		return nil, fmt.Errorf("proxy: invalid proxy URL: %w", err)
 	}
 
 	transport := &http.Transport{
@@ -40,17 +39,15 @@ func NewClient(proxyURL string) (*http.Client, error) {
 	case "socks5", "socks5h":
 		dialer, err := proxy.FromURL(u, proxy.Direct)
 		if err != nil {
-			return nil, fmt.Errorf("proxy: 创建 SOCKS5 代理拨号器失败: %w", err)
+			return nil, fmt.Errorf("proxy: failed to create SOCKS5 dialer: %w", err)
 		}
-		if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
-			transport.DialContext = contextDialer.DialContext
-		} else {
-			transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
-			}
+		contextDialer, ok := dialer.(proxy.ContextDialer)
+		if !ok {
+			return nil, fmt.Errorf("proxy: SOCKS5 dialer does not support context dialing")
 		}
+		transport.DialContext = contextDialer.DialContext
 	default:
-		return nil, fmt.Errorf("proxy: 不支持的代理协议 %q", u.Scheme)
+		return nil, fmt.Errorf("proxy: unsupported proxy scheme %q", u.Scheme)
 	}
 
 	return &http.Client{
