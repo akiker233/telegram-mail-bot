@@ -98,16 +98,19 @@ func New(
     oauthConfigs map[string]oauth2.Config,
     version string,
     apiURL string,
-    proxyClient tgbotapi.HTTPClient,
+    telegramProxyClient tgbotapi.HTTPClient,
+    globalHTTPClient *http.Client,
 ) (*Bot, error)
 ```
 
 实现：
 
+- `Bot` 结构体新增 `httpClient *http.Client` 字段，保存 `globalHTTPClient` 供 `/update` 使用。
 - 若 `apiURL` 为空，使用 `tgbotapi.APIEndpoint`。
 - 否则把 `apiURL` 拼接为 `apiURL + "/bot%s/%s"`。
 - 使用 `tgbotapi.NewBotAPIWithClient(token, endpoint, client)` 创建 BotAPI。
-- `proxyClient` 为空时使用 `http.DefaultClient`。
+- `telegramProxyClient` 为空时使用 `http.DefaultClient`。
+- `globalHTTPClient` 为空时使用 `http.DefaultClient`。
 
 ### 4. OAuth 全局代理集成
 
@@ -169,7 +172,7 @@ token, err := oauth.RefreshIfNeeded(ctx, m.db, m.key, oauthCfg, account)
 2. 用 `cfg.TelegramProxy` 创建 Telegram 代理客户端（若配置）。
 3. 用 `cfg.GlobalProxy` 创建全局代理客户端（若配置）。
 4. 调用 `manager.New(database, encryptionKey, send, oauthConfigs, globalClient)`。
-5. 调用 `telegram.New(..., cfg.TelegramAPIURL, telegramClient)`。
+5. 调用 `telegram.New(..., cfg.TelegramAPIURL, telegramClient, globalClient)`。
 6. OAuth context 注入全局客户端。
 7. `/update` 调用传入全局客户端。
 
@@ -184,7 +187,7 @@ proxy.NewClient(cfg.TelegramProxy) → telegramClient
 proxy.NewClient(cfg.GlobalProxy)   → globalClient
   ↓
 manager.New(database, encryptionKey, send, oauthConfigs, globalClient)
-telegram.New(token, ..., cfg.TelegramAPIURL, telegramClient)
+telegram.New(token, ..., cfg.TelegramAPIURL, telegramClient, globalClient)
   ↓
 ctx = context.WithValue(ctx, oauth2.HTTPClient, globalClient)
   ↓
