@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -27,19 +28,25 @@ type Manager struct {
 	key          []byte
 	send         SendFunc
 	oauthConfigs map[string]oauth2.Config // provider -> config，未配置 Client ID 的 provider 不在此表中
+	httpClient   *http.Client             // 全局代理客户端，用于 OAuth token 刷新
 	mu           sync.Mutex
 	cancels      map[int64]context.CancelFunc
 }
 
-// New 创建一个 Manager。key 是通过 crypto.DeriveKey 派生的加密密钥。
+// New 创建一个 Manager。
+// database 是 SQLite 数据库连接。
+// key 是通过 crypto.DeriveKey 派生的加密密钥。
+// send 用于向 Telegram 用户发送文本消息。
 // oauthConfigs 按 provider（"gmail"/"outlook"）索引，用于 OAuth 账号刷新 token；
 // 未配置对应 provider 的 Client ID 时传空 map 即可，OAuth 账号会在启动时报认证错误。
-func New(database *sql.DB, key []byte, send SendFunc, oauthConfigs map[string]oauth2.Config) *Manager {
+// httpClient 是全局代理客户端，用于 OAuth token 刷新；未配置代理时可传 nil。
+func New(database *sql.DB, key []byte, send SendFunc, oauthConfigs map[string]oauth2.Config, httpClient *http.Client) *Manager {
 	return &Manager{
 		db:           database,
 		key:          key,
 		send:         send,
 		oauthConfigs: oauthConfigs,
+		httpClient:   httpClient,
 		cancels:      make(map[int64]context.CancelFunc),
 	}
 }
@@ -149,7 +156,11 @@ func (m *Manager) tokenProvider(ctx context.Context, oauthCfg oauth2.Config, acc
 		if err != nil {
 			return "", fmt.Errorf("reload account: %w", err)
 		}
-		token, err := oauth.RefreshIfNeeded(ctx, m.db, m.key, oauthCfg, account)
+		refreshCtx := ctx
+		if m.httpClient != nil {
+			refreshCtx = context.WithValue(ctx, oauth2.HTTPClient, m.httpClient)
+		}
+		token, err := oauth.RefreshIfNeeded(refreshCtx, m.db, m.key, oauthCfg, account)
 		if err != nil && oauth.IsPermanent(err) {
 			return "", &mail.AuthError{Err: err}
 		}

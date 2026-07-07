@@ -43,7 +43,7 @@ var (
 
 // CheckVersion 查询 GitHub 最新版本。如果比 currentVersion 新则返回新版本号，
 // 一样新则返回空字符串，出错时返回 error。
-func CheckVersion(currentVersion string) (string, error) {
+func CheckVersion(currentVersion string, client *http.Client) (string, error) {
 	if currentVersion == "" {
 		return "", fmt.Errorf("当前是开发版本")
 	}
@@ -51,7 +51,7 @@ func CheckVersion(currentVersion string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	release, err := fetchLatestRelease(ctx)
+	release, err := fetchLatestRelease(ctx, client)
 	if err != nil {
 		return "", err
 	}
@@ -64,7 +64,7 @@ func CheckVersion(currentVersion string) (string, error) {
 
 // Run 是 `./mailbot update` 的主流程：检查 GitHub 上的最新版本，如果比当前版本新，
 // 下载对应平台的压缩包、校验 SHA256、解压取出二进制并替换掉当前正在运行的程序。
-func Run(currentVersion string) error {
+func Run(currentVersion string, client *http.Client) error {
 	if currentVersion == "" {
 		return fmt.Errorf("当前是开发版本，无法自动更新，请手动从 Release 页面下载")
 	}
@@ -72,7 +72,7 @@ func Run(currentVersion string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	release, err := fetchLatestRelease(ctx)
+	release, err := fetchLatestRelease(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func Run(currentVersion string) error {
 		return fmt.Errorf("未找到 checksums.txt，无法校验更新包完整性")
 	}
 
-	checksumsData, err := fetchAsset(ctx, checksumsAsset.BrowserDownloadURL)
+	checksumsData, err := fetchAsset(ctx, client, checksumsAsset.BrowserDownloadURL)
 	if err != nil {
 		return fmt.Errorf("update: 下载 checksums.txt 失败: %w", err)
 	}
@@ -102,7 +102,7 @@ func Run(currentVersion string) error {
 		return err
 	}
 
-	archiveData, err := fetchAsset(ctx, asset.BrowserDownloadURL)
+	archiveData, err := fetchAsset(ctx, client, asset.BrowserDownloadURL)
 	if err != nil {
 		return fmt.Errorf("update: 下载更新包失败: %w", err)
 	}
@@ -141,6 +141,14 @@ func findAsset(assets []Asset, name string) *Asset {
 	return nil
 }
 
+// httpClientOrDefault 在 client 为空时返回 http.DefaultClient，保证请求始终有可用客户端。
+func httpClientOrDefault(client *http.Client) *http.Client {
+	if client == nil {
+		return http.DefaultClient
+	}
+	return client
+}
+
 // parseChecksum 从 checksums.txt（`sha256sum` 输出格式：`<hash>  <filename>`）里取出指定文件名对应的哈希值。
 func parseChecksum(checksums, filename string) (string, error) {
 	for _, line := range strings.Split(checksums, "\n") {
@@ -159,7 +167,7 @@ func parseChecksum(checksums, filename string) (string, error) {
 	return "", fmt.Errorf("update: checksums.txt 中未找到 %s 的校验和", filename)
 }
 
-func fetchLatestReleaseHTTP(ctx context.Context) (*Release, error) {
+func fetchLatestReleaseHTTP(ctx context.Context, client *http.Client) (*Release, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -167,7 +175,7 @@ func fetchLatestReleaseHTTP(ctx context.Context) (*Release, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("update: 请求 GitHub Release 失败: %w", err)
 	}
@@ -184,13 +192,13 @@ func fetchLatestReleaseHTTP(ctx context.Context) (*Release, error) {
 	return &release, nil
 }
 
-func fetchAssetHTTP(ctx context.Context, url string) ([]byte, error) {
+func fetchAssetHTTP(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("update: 构造请求失败: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("update: 下载失败: %w", err)
 	}

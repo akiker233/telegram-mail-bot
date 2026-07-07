@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"runtime"
 	"testing"
 )
 
 // withFakes 临时替换网络请求和实际替换二进制的三个包级变量，测试结束后自动还原。
-func withFakes(t *testing.T, release func(ctx context.Context) (*Release, error), asset func(ctx context.Context, url string) ([]byte, error), apply func(binary []byte) error) *bool {
+func withFakes(t *testing.T, release func(ctx context.Context, client *http.Client) (*Release, error), asset func(ctx context.Context, client *http.Client, url string) ([]byte, error), apply func(binary []byte) error) *bool {
 	t.Helper()
 	origRelease, origAsset, origApply := fetchLatestRelease, fetchAsset, applyBinary
 	applyCalled := false
@@ -37,7 +38,7 @@ func withFakes(t *testing.T, release func(ctx context.Context) (*Release, error)
 func TestRunEmptyVersionErrors(t *testing.T) {
 	applyCalled := withFakes(t, nil, nil, nil)
 
-	err := Run("")
+	err := Run("", http.DefaultClient)
 	if err == nil {
 		t.Fatal("expected error for empty current version, got nil")
 	}
@@ -47,11 +48,11 @@ func TestRunEmptyVersionErrors(t *testing.T) {
 }
 
 func TestRunAlreadyLatestVersion(t *testing.T) {
-	applyCalled := withFakes(t, func(ctx context.Context) (*Release, error) {
+	applyCalled := withFakes(t, func(ctx context.Context, client *http.Client) (*Release, error) {
 		return &Release{TagName: "v1.1.0"}, nil
 	}, nil, nil)
 
-	err := Run("v1.1.0")
+	err := Run("v1.1.0", http.DefaultClient)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestRunNewVersionAvailableAppliesUpdate(t *testing.T) {
 	sum := sha256.Sum256(archiveData)
 	checksums := fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), assetName)
 
-	applyCalled := withFakes(t, func(ctx context.Context) (*Release, error) {
+	applyCalled := withFakes(t, func(ctx context.Context, client *http.Client) (*Release, error) {
 		return &Release{
 			TagName: "v1.1.0",
 			Assets: []Asset{
@@ -75,7 +76,7 @@ func TestRunNewVersionAvailableAppliesUpdate(t *testing.T) {
 				{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
 			},
 		}, nil
-	}, func(ctx context.Context, url string) ([]byte, error) {
+	}, func(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 		if url == "https://example.com/checksums.txt" {
 			return []byte(checksums), nil
 		}
@@ -87,7 +88,7 @@ func TestRunNewVersionAvailableAppliesUpdate(t *testing.T) {
 		return nil
 	})
 
-	if err := Run("v1.0.0"); err != nil {
+	if err := Run("v1.0.0", http.DefaultClient); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !*applyCalled {
@@ -95,12 +96,35 @@ func TestRunNewVersionAvailableAppliesUpdate(t *testing.T) {
 	}
 }
 
+func TestRunPassesCustomClientToFetchers(t *testing.T) {
+	customClient := &http.Client{Timeout: 456}
+	var gotReleaseClient, gotAssetClient *http.Client
+
+	applyCalled := withFakes(t, func(ctx context.Context, client *http.Client) (*Release, error) {
+		gotReleaseClient = client
+		return &Release{TagName: "v1.1.0"}, nil
+	}, func(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+		gotAssetClient = client
+		return []byte("checksum"), nil
+	}, nil)
+
+	// 版本相同，applyBinary 不会被调用，但 fetchLatestRelease 仍会被调用一次。
+	_ = Run("v1.1.0", customClient)
+	if gotReleaseClient != customClient {
+		t.Errorf("fetchLatestRelease did not receive custom client")
+	}
+	if *applyCalled {
+		t.Error("applyBinary should not be called when already on latest version")
+	}
+	_ = gotAssetClient
+}
+
 func TestRunChecksumMismatchAbortsWithoutApply(t *testing.T) {
 	archiveData := buildArchiveForCurrentPlatform(t, []byte("fake binary content"))
 	assetName := fmt.Sprintf("mailbot_%s_%s.%s", runtime.GOOS, runtime.GOARCH, archiveExt())
 	wrongChecksums := fmt.Sprintf("%s  %s\n", "0000000000000000000000000000000000000000000000000000000000000000", assetName)
 
-	applyCalled := withFakes(t, func(ctx context.Context) (*Release, error) {
+	applyCalled := withFakes(t, func(ctx context.Context, client *http.Client) (*Release, error) {
 		return &Release{
 			TagName: "v1.1.0",
 			Assets: []Asset{
@@ -108,14 +132,14 @@ func TestRunChecksumMismatchAbortsWithoutApply(t *testing.T) {
 				{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
 			},
 		}, nil
-	}, func(ctx context.Context, url string) ([]byte, error) {
+	}, func(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 		if url == "https://example.com/checksums.txt" {
 			return []byte(wrongChecksums), nil
 		}
 		return archiveData, nil
 	}, nil)
 
-	err := Run("v1.0.0")
+	err := Run("v1.0.0", http.DefaultClient)
 	if err == nil {
 		t.Fatal("expected error on checksum mismatch, got nil")
 	}
@@ -125,16 +149,33 @@ func TestRunChecksumMismatchAbortsWithoutApply(t *testing.T) {
 }
 
 func TestRunMissingAssetErrors(t *testing.T) {
-	applyCalled := withFakes(t, func(ctx context.Context) (*Release, error) {
+	applyCalled := withFakes(t, func(ctx context.Context, client *http.Client) (*Release, error) {
 		return &Release{TagName: "v1.1.0"}, nil
 	}, nil, nil)
 
-	err := Run("v1.0.0")
+	err := Run("v1.0.0", http.DefaultClient)
 	if err == nil {
 		t.Fatal("expected error when no matching asset is found, got nil")
 	}
 	if *applyCalled {
 		t.Error("applyBinary should not be called when no matching asset is found")
+	}
+}
+
+func TestCheckVersionPassesCustomClient(t *testing.T) {
+	customClient := &http.Client{Timeout: 789}
+	var gotClient *http.Client
+
+	origRelease := fetchLatestRelease
+	fetchLatestRelease = func(ctx context.Context, client *http.Client) (*Release, error) {
+		gotClient = client
+		return &Release{TagName: "v1.1.0"}, nil
+	}
+	defer func() { fetchLatestRelease = origRelease }()
+
+	_, _ = CheckVersion("v1.0.0", customClient)
+	if gotClient != customClient {
+		t.Error("CheckVersion did not pass custom client to fetchLatestRelease")
 	}
 }
 

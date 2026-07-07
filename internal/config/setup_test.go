@@ -19,7 +19,7 @@ func TestRunSetupWizardSkipsOptionalFieldsOnEmptyInput(t *testing.T) {
 	chdirForTest(t, dir)
 
 	// 依次对应 setupFields 顺序：必填三项给值，其余全部留空跳过。
-	input := "token\nkey\n111\n\n\n\n\n\n"
+	input := "token\nkey\n111\n\n\n\n\n\n\n\n"
 	var out bytes.Buffer
 	if err := runSetupWizard(strings.NewReader(input), &out); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -56,7 +56,7 @@ func TestRunSetupWizardRepromptsOnEmptyRequiredField(t *testing.T) {
 	chdirForTest(t, dir)
 
 	// TELEGRAM_BOT_TOKEN 先留空一次再补上，之后必填项和剩余可选项全部给值/跳过。
-	input := "\ntoken\nkey\n222\n\n\n\n\n\n"
+	input := "\ntoken\nkey\n222\n\n\n\n\n\n\n\n"
 	var out bytes.Buffer
 	if err := runSetupWizard(strings.NewReader(input), &out); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -84,7 +84,7 @@ func TestRunReconfigureWizardKeepsCurrentValueOnEmptyInput(t *testing.T) {
 	chdirForTest(t, dir)
 
 	// 全部留空：必填三项应保留旧值，可选项保持为空。
-	input := "\n\n\n\n\n\n\n\n"
+	input := "\n\n\n\n\n\n\n\n\n\n\n"
 	var out bytes.Buffer
 	if err := runReconfigureWizard(strings.NewReader(input), &out); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -117,7 +117,7 @@ func TestRunReconfigureWizardOverwritesWithNewInput(t *testing.T) {
 	chdirForTest(t, dir)
 
 	// 只对第一项输入新值，其余留空保留/跳过。
-	input := "new-token\n\n\n\n\n\n\n\n"
+	input := "new-token\n\n\n\n\n\n\n\n\n\n"
 	var out bytes.Buffer
 	if err := runReconfigureWizard(strings.NewReader(input), &out); err != nil {
 		t.Fatalf("unexpected error: %v", err)

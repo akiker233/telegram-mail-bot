@@ -14,6 +14,7 @@ import (
 	"telegram-mail-bot/internal/crypto"
 	"telegram-mail-bot/internal/db"
 	"telegram-mail-bot/internal/manager"
+	"telegram-mail-bot/internal/proxy"
 	"telegram-mail-bot/internal/telegram"
 	"telegram-mail-bot/internal/update"
 )
@@ -34,7 +35,13 @@ func main() {
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "update" {
-		if err := update.Run(version); err != nil {
+		// update 子命令不走 config.Load()，直接从环境变量读取全局代理配置。
+		globalClient, err := proxy.NewClient(os.Getenv("GLOBAL_PROXY"))
+		if err != nil {
+			slog.Error("解析全局代理配置失败", "err", err)
+			os.Exit(1)
+		}
+		if err := update.Run(version, globalClient); err != nil {
 			slog.Error("更新失败", "err", err)
 			os.Exit(1)
 		}
@@ -49,6 +56,18 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("加载配置失败", "err", err)
+		os.Exit(1)
+	}
+
+	telegramClient, err := proxy.NewClient(cfg.TelegramProxy)
+	if err != nil {
+		slog.Error("解析 Telegram 代理配置失败", "err", err)
+		os.Exit(1)
+	}
+
+	globalClient, err := proxy.NewClient(cfg.GlobalProxy)
+	if err != nil {
+		slog.Error("解析全局代理配置失败", "err", err)
 		os.Exit(1)
 	}
 
@@ -73,9 +92,9 @@ func main() {
 
 	logStartupInfo(cfg.DBPath, oauthConfigs)
 
-	mgr := manager.New(database, encryptionKey, send, oauthConfigs)
+	mgr := manager.New(database, encryptionKey, send, oauthConfigs, globalClient)
 
-	bot, err = telegram.New(cfg.TelegramBotToken, database, mgr, cfg.AllowedUsers, encryptionKey, oauthConfigs, version)
+	bot, err = telegram.New(cfg.TelegramBotToken, database, mgr, cfg.AllowedUsers, encryptionKey, oauthConfigs, version, cfg.TelegramAPIURL, telegramClient, globalClient)
 	if err != nil {
 		slog.Error("初始化 Telegram 机器人失败", "err", err)
 		os.Exit(1)

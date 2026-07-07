@@ -25,6 +25,10 @@ type Config struct {
 	GmailOAuthClientSecret   string
 	OutlookOAuthClientID     string
 	OutlookOAuthClientSecret string
+
+	TelegramAPIURL string // 自定义 Telegram Bot API 基础 URL
+	TelegramProxy  string // Telegram Bot API 专用代理
+	GlobalProxy    string // 全局代理，用于 OAuth、/update 等
 }
 
 // Load 从环境变量读取配置，缺失必填项时返回错误。
@@ -67,6 +71,9 @@ func Load() (*Config, error) {
 		GmailOAuthClientSecret:   os.Getenv("GMAIL_OAUTH_CLIENT_SECRET"),
 		OutlookOAuthClientID:     os.Getenv("OUTLOOK_OAUTH_CLIENT_ID"),
 		OutlookOAuthClientSecret: os.Getenv("OUTLOOK_OAUTH_CLIENT_SECRET"),
+		TelegramAPIURL:           os.Getenv("TELEGRAM_API_URL"),
+		TelegramProxy:            os.Getenv("TELEGRAM_PROXY"),
+		GlobalProxy:              os.Getenv("GLOBAL_PROXY"),
 	}, nil
 }
 
