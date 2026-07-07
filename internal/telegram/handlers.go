@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"golang.org/x/oauth2"
 
 	"telegram-mail-bot/internal/crypto"
 	"telegram-mail-bot/internal/db"
@@ -40,6 +42,14 @@ type AccountStarter interface {
 	Start(ctx context.Context, account *db.Account) error
 	Stop(accountID int64)
 	IsRunning(accountID int64) bool
+}
+
+// oauthContext 在 client 非空时把全局代理客户端注入 context，供 OAuth2 流程使用。
+func oauthContext(ctx context.Context, client *http.Client) context.Context {
+	if client == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, client)
 }
 
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
@@ -203,7 +213,8 @@ func (b *Bot) startOAuthFlow(chatID, userID int64, sess *Session) {
 		return
 	}
 
-	resp, err := oauth.StartDeviceFlow(b.ctx, cfg)
+	flowCtx := oauthContext(b.ctx, b.httpClient)
+	resp, err := oauth.StartDeviceFlow(flowCtx, cfg)
 	if err != nil {
 		b.sessions.Clear(userID)
 		b.reply(chatID, "❌ 发起 OAuth 授权失败: "+err.Error())
@@ -213,7 +224,7 @@ func (b *Bot) startOAuthFlow(chatID, userID int64, sess *Session) {
 	b.reply(chatID, fmt.Sprintf("🔐 请在浏览器打开 %s 并输入代码 %s 完成授权（最多等待8分钟）", resp.VerificationURI, resp.UserCode))
 
 	go func() {
-		token, err := oauth.PollToken(b.ctx, cfg, resp)
+		token, err := oauth.PollToken(oauthContext(b.ctx, b.httpClient), cfg, resp)
 
 		// 轮询期间用户可能已经 /cancel 或重新 /addaccount，此时 sess 已不是当前会话，
 		// 结果应该被丢弃，不能写进一个不再代表当前状态的会话里。
@@ -308,7 +319,8 @@ func (b *Bot) startReauthorize(chatID, userID, accountID int64) {
 		return
 	}
 
-	resp, err := oauth.StartDeviceFlow(b.ctx, cfg)
+	flowCtx := oauthContext(b.ctx, b.httpClient)
+	resp, err := oauth.StartDeviceFlow(flowCtx, cfg)
 	if err != nil {
 		b.reply(chatID, "❌ 发起 OAuth 授权失败: "+err.Error())
 		return
@@ -317,7 +329,7 @@ func (b *Bot) startReauthorize(chatID, userID, accountID int64) {
 	b.reply(chatID, fmt.Sprintf("🔐 请在浏览器打开 %s 并输入代码 %s 完成授权（最多等待8分钟）", resp.VerificationURI, resp.UserCode))
 
 	go func() {
-		token, err := oauth.PollToken(b.ctx, cfg, resp)
+		token, err := oauth.PollToken(oauthContext(b.ctx, b.httpClient), cfg, resp)
 		if err != nil {
 			b.reply(chatID, "❌ OAuth 重新授权失败或超时: "+err.Error())
 			return
@@ -639,7 +651,7 @@ func (b *Bot) sendMail(userID int64, draft SendDraft) error {
 		if !ok {
 			return fmt.Errorf("OAuth provider %q 未配置", account.OAuthProvider)
 		}
-		accessToken, err := oauth.RefreshIfNeeded(b.ctx, b.db, b.encryptionKey, oauthCfg, account)
+		accessToken, err := oauth.RefreshIfNeeded(oauthContext(b.ctx, b.httpClient), b.db, b.encryptionKey, oauthCfg, account)
 		if err != nil {
 			return fmt.Errorf("获取 OAuth token 失败: %w", err)
 		}
