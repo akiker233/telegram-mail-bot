@@ -536,7 +536,7 @@ func (b *Bot) handleUpdate(chatID int64) {
 	b.reply(chatID, "🔍 正在检查更新...")
 
 	go func() {
-		newVer, err := update.CheckVersion(b.version)
+		newVer, err := update.CheckVersion(b.version, b.httpClient)
 		if err != nil {
 			b.reply(chatID, fmt.Sprintf("❌ 检查更新失败: %v", err))
 			return
@@ -549,7 +549,7 @@ func (b *Bot) handleUpdate(chatID int64) {
 		// 发现新版本，执行下载并替换。
 		b.reply(chatID, fmt.Sprintf("⬇️ 发现新版本 %s，正在下载更新...", newVer))
 
-		if err := update.Run(b.version); err != nil {
+		if err := update.Run(b.version, b.httpClient); err != nil {
 			b.reply(chatID, fmt.Sprintf("❌ 更新失败: %v", err))
 			return
 		}
